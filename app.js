@@ -187,7 +187,7 @@ function computeStats(t) {
   const n = t.pts.length;
   t.hi = knots.length ? Math.round(knots.reduce((m, k) => Math.max(m, k[1]), -Infinity)) : null;
   t.lo = knots.length ? Math.round(knots.reduce((m, k) => Math.min(m, k[1]), Infinity)) : null;
-  if (knots.length < 2 || dist <= 0) {
+  if (knots.length < 2 || !(dist > 0) || !isFinite(dist)) {
     t.dplus = 0; t.dminus = 0;
     t.cumDplus = new Array(n).fill(0);
     t.cumDminus = new Array(n).fill(0);
@@ -794,21 +794,30 @@ function lat2y(lat, z) {
   const r = lat * Math.PI / 180;
   return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 2 ** z);
 }
-function tilesForView(zMax) {
+function tileRanges(zMax) {
   const b = map.getBounds();
   const zMin = Math.min(Math.max(map.getZoom(), 6), zMax);
+  const ranges = [];
+  for (let z = zMin; z <= zMax; z++)
+    ranges.push({ z, x1: lon2x(b.getWest(), z), x2: lon2x(b.getEast(), z),
+                  y1: lat2y(b.getNorth(), z), y2: lat2y(b.getSouth(), z) });
+  return ranges;
+}
+/* nombre de tuiles calculé SANS matérialiser la liste : à faible zoom la liste
+   ferait des millions d'entrées et Safari iOS tue la page (plantage récurrent) */
+function countTiles(zMax) {
+  return tileRanges(zMax).reduce((n, r) => n + (r.x2 - r.x1 + 1) * (r.y2 - r.y1 + 1), 0);
+}
+function listTiles(zMax) {
   const list = [];
-  for (let z = zMin; z <= zMax; z++) {
-    const x1 = lon2x(b.getWest(), z), x2 = lon2x(b.getEast(), z);
-    const y1 = lat2y(b.getNorth(), z), y2 = lat2y(b.getSouth(), z);
-    for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) list.push([z, x, y]);
-  }
+  for (const r of tileRanges(zMax))
+    for (let x = r.x1; x <= r.x2; x++) for (let y = r.y1; y <= r.y2; y++) list.push([r.z, x, y]);
   return list;
 }
 function updateEstimate() {
   const zMax = +$("zmax").value;
   $("zmax-val").textContent = zMax;
-  const n = tilesForView(zMax).length;
+  const n = countTiles(zMax);
   const mb = (n * LAYERS[state.layerId].kb / 1024).toFixed(1);
   $("dl-estimate").textContent =
     `≈ ${n.toLocaleString("fr-FR")} tuiles (${mb} Mo) — zoom ${Math.min(map.getZoom(), zMax)} → ${zMax}, fond « ${LAYERS[state.layerId].name} »`;
@@ -820,7 +829,8 @@ $("zmax").addEventListener("input", updateEstimate);
 async function downloadArea() {
   if (!navigator.onLine) { toast("Connexion nécessaire pour télécharger"); return; }
   const zMax = +$("zmax").value;
-  const tiles = tilesForView(zMax);
+  if (countTiles(zMax) > 40000) { toast("Zone trop grande : zoomez davantage"); return; }
+  const tiles = listTiles(zMax);
   const layerId = state.layerId, tpl = LAYERS[layerId].url;
   const ctrl = new AbortController();
   state.dlAbort = ctrl;
