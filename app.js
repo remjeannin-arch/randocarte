@@ -84,7 +84,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v10";
+const APP_VERSION = "v11";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -122,7 +122,8 @@ const toast = (msg, ms = 2600) => {
 const saved = JSON.parse(localStorage.getItem("rc.view") || "null");
 /* preferCanvas : rendu des tracés sur canvas, bien plus léger que le SVG pour les
    GPX de plusieurs milliers de points (le SVG faisait planter Safari iOS) */
-const map = L.map("map", { zoomControl: false, attributionControl: true, preferCanvas: true })
+const map = L.map("map", { zoomControl: false, attributionControl: true, preferCanvas: true,
+  renderer: L.canvas({ tolerance: 14 }) }) /* tolérance : zone de toucher élargie au doigt */
   .setView(saved ? saved.c : [45.5, 2.5], saved ? saved.z : 6);
 map.on("moveend", () => {
   localStorage.setItem("rc.view", JSON.stringify({ c: [map.getCenter().lat, map.getCenter().lng], z: map.getZoom() }));
@@ -361,6 +362,9 @@ function renderTrackList() {
         <div>↘ Dénivelé négatif<b>${t.dminus ? "− " + t.dminus + " m" : "–"}</b></div>
         <div>▲ Point haut<b>${t.hi != null ? t.hi.toLocaleString("fr-FR") + " m" : "–"}</b></div>
         <div>▼ Point bas<b>${t.lo != null ? t.lo.toLocaleString("fr-FR") + " m" : "–"}</b></div>
+        <div class="fiche-nav">🚗 Itinéraire voiture vers le départ&nbsp;:
+          <a href="https://maps.apple.com/?daddr=${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}&dirflg=d" target="_blank" rel="noopener">Plans</a> ·
+          <a href="https://www.google.com/maps/dir/?api=1&destination=${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}&travelmode=driving" target="_blank" rel="noopener">Google&nbsp;Maps</a></div>
       </div>` : ""}`;
     div.querySelector(".track-head").addEventListener("click", (e) => {
       const a = e.target.getAttribute && e.target.getAttribute("data-a");
