@@ -42,20 +42,6 @@
     box-shadow: 0 2px 8px rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
   .fab.active { background: var(--accent); color: #fff; }
   .fab:active { transform: scale(.94); }
-  #fab-rec { color: #ff6b6b; }
-  #fab-rec.recording { background: #c92a2a; color: #fff; animation: recpulse 1.6s infinite; }
-  @keyframes recpulse { 50% { opacity: .65; } }
-
-  /* barre d'enregistrement */
-  #rec-bar { position: absolute; left: 8px; right: 8px; bottom: calc(var(--safe-bottom) + 40px);
-    z-index: 750; display: none; align-items: center; gap: 7px;
-    background: rgba(58,14,14,.93); border: 1px solid #c92a2a; border-radius: 12px; padding: 7px 10px; }
-  #rec-bar.on { display: flex; }
-  #rec-info { flex: 1; font-size: 13px; font-variant-numeric: tabular-nums; }
-  #rec-bar button { border: none; border-radius: 9px; padding: 7px 11px; background: #4a2525;
-    color: #ffc9c9; font-size: 14px; cursor: pointer; }
-  #rec-bar #rec-stop { background: #c92a2a; color: #fff; font-weight: 600; }
-  body.rec-on #profile-wrap { bottom: calc(var(--safe-bottom) + 96px); }
 
   #netdot { position: absolute; left: 10px; bottom: calc(var(--safe-bottom) + 10px); z-index: 800;
     font-size: 11px; background: rgba(26,29,33,.85); padding: 4px 9px; border-radius: 20px; color: var(--muted); }
@@ -178,13 +164,6 @@
   <button class="fab" id="fab-locate" title="Ma position">🧭</button>
   <button class="fab" id="fab-follow" title="Suivi auto" style="display:none">📍</button>
   <button class="fab" id="fab-profile" title="Profil altimétrique" style="display:none">⛰️</button>
-  <button class="fab" id="fab-rec" title="Enregistrer ma trace">⏺</button>
-</div>
-
-<div id="rec-bar">
-  <span id="rec-info">⏺ 0 min · 0 m</span>
-  <button id="rec-pause" title="Pause">⏸</button>
-  <button id="rec-stop">⏹ Terminer</button>
 </div>
 
 <div id="netdot">En ligne</div>
@@ -244,8 +223,6 @@
     <div class="switch-row"><span>🔆 Garder l'écran allumé</span><input type="checkbox" id="opt-wake"></div>
     <div class="switch-row"><span>📍 Recentrer automatiquement</span><input type="checkbox" id="opt-follow" checked></div>
     <div class="switch-row"><span>🔄 Mise en cache auto en naviguant</span><input type="checkbox" id="opt-autocache" checked></div>
-    <h3>Enregistrement de trace</h3>
-    <small class="hint">Le bouton ⏺ enregistre votre parcours réel&nbsp;: distance, durée, vitesses, D+/D−, avec export GPX horodaté (importable dans Strava). <b>Important&nbsp;:</b> iOS coupe le GPS des applis web en arrière-plan — gardez RandoCarte affichée à l'écran pendant l'enregistrement (l'option «&nbsp;écran allumé&nbsp;» s'active automatiquement). Pour économiser la batterie&nbsp;: baissez la luminosité au minimum et fermez les autres applis. Comptez environ 10–15&nbsp;% de batterie par heure.</small>
     <h3>Installer l'application</h3>
     <small class="hint">
       <b>iPhone / iPad&nbsp;:</b> dans Safari, touchez Partager <span style="font-size:15px">⎋</span> puis «&nbsp;Sur l'écran d'accueil&nbsp;».<br>
