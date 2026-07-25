@@ -84,7 +84,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v12";
+const APP_VERSION = "v13";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -352,7 +352,9 @@ function renderTrackList() {
       ${t.id === state.activeTrackId && t.pts.length > 1 ? `
       <div class="track-fiche">
         <div>↔ Distance<b>${fmtDist(t.dist)}</b></div>
-        <div>◔ Durée estimée<b>≈ ${estimateDuration(t)}</b></div>
+        <div>◔ Durée ${t.recStats ? "réelle" : "estimée"}<b>${t.recStats ? fmtDur(t.recStats.durMs) : "≈ " + estimateDuration(t)}</b></div>
+        ${t.recStats ? `<div>🚶 Vitesse moyenne<b>${t.recStats.movMs > 0 ? (t.dist / (t.recStats.movMs / 1000) * 3.6).toFixed(1) + " km/h" : "–"}</b></div>
+        <div>⚡ Vitesse max<b>${t.recStats.maxKmh ? t.recStats.maxKmh.toFixed(1) + " km/h" : "–"}</b></div>` : ""}
         <div>▲ Difficulté estimée<b>${difficulty(t)}</b></div>
         <div>⚐ Retour au départ<b>${t.loop ? "Oui (boucle)" : "Non"}</b></div>
         <div>↗ Dénivelé positif<b>${t.dplus ? "+ " + t.dplus + " m" : "–"}</b></div>
@@ -462,8 +464,8 @@ async function loadTracks() {
 const escapeXml = (s) => s.replace(/[<>&"']/g, c =>
   ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" }[c]));
 function exportGPX(t) {
-  const seg = t.pts.map(p =>
-    `<trkpt lat="${p[0].toFixed(6)}" lon="${p[1].toFixed(6)}">${p[2] != null ? `<ele>${Math.round(p[2] * 10) / 10}</ele>` : ""}</trkpt>`
+  const seg = t.pts.map((p, i) =>
+    `<trkpt lat="${p[0].toFixed(6)}" lon="${p[1].toFixed(6)}">${p[2] != null ? `<ele>${Math.round(p[2] * 10) / 10}</ele>` : ""}${t.times && t.times[i] ? `<time>${t.times[i]}</time>` : ""}</trkpt>`
   ).join("\n");
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="RandoCarte" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>${escapeXml(t.name)}</name><trkseg>\n${seg}\n</trkseg></trk>\n</gpx>`;
   const a = document.createElement("a");
@@ -820,9 +822,129 @@ function onPos(e) {
       { animate: !firstFix });
   }
   firstFix = false;
+  recPoint(c);
   updateHeadingVisual();
   updateNavHUD();
 }
+
+/* ================= Enregistrement de trace (façon Strava) ================= */
+const rec = { on: false, paused: false, pts: [], times: [], startT: 0, pausedMs: 0, pauseT: 0,
+  dist: 0, dplus: 0, dminus: 0, anchor: null, maxSpd: 0, movMs: 0, lastT: 0 };
+let recTimer = null, recLine = null;
+const fmtDur = (ms) => {
+  const m = Math.floor(ms / 60000), h = Math.floor(m / 60);
+  return h ? `${h}h${String(m % 60).padStart(2, "0")}` : `${m} min`;
+};
+const recDurMs = () =>
+  Date.now() - rec.startT - rec.pausedMs - (rec.paused ? Date.now() - rec.pauseT : 0);
+const persistRec = () => localStorage.setItem("rc.rec", JSON.stringify({
+  pts: rec.pts, times: rec.times, startT: rec.startT, pausedMs: rec.pausedMs,
+  dist: rec.dist, dplus: rec.dplus, dminus: rec.dminus, anchor: rec.anchor,
+  maxSpd: rec.maxSpd, movMs: rec.movMs }));
+
+function recPoint(c) {
+  if (!rec.on || rec.paused) return;
+  if (c.accuracy > 35) return;                       // point trop imprécis : ignoré
+  const p = [c.latitude, c.longitude, c.altitude];
+  const last = rec.pts[rec.pts.length - 1];
+  if (last) {
+    const d = haversine(last, p);
+    if (d < 5) return;                               // filtre 5 m : batterie, stockage, bruit
+    rec.dist += d;
+    const dt = Date.now() - rec.lastT;
+    if (dt < 60000) rec.movMs += dt;                 // temps en mouvement (pauses > 1 min exclues)
+    if (c.speed != null && c.speed > rec.maxSpd && c.speed < 12) rec.maxSpd = c.speed;
+    if (c.altitude != null) {
+      if (rec.anchor == null) rec.anchor = c.altitude;
+      else {
+        const de = c.altitude - rec.anchor;          // hystérésis 10 m, comme les traces
+        if (de >= 10) { rec.dplus += de; rec.anchor = c.altitude; }
+        else if (de <= -10) { rec.dminus -= de; rec.anchor = c.altitude; }
+      }
+    }
+  } else if (c.altitude != null) rec.anchor = c.altitude;
+  rec.lastT = Date.now();
+  rec.pts.push(p);
+  rec.times.push(new Date().toISOString());
+  if (!recLine) recLine = L.polyline([[p[0], p[1]]], { color: "#ff3b30", weight: 4 }).addTo(map);
+  else recLine.addLatLng([p[0], p[1]]);
+  if (rec.pts.length % 15 === 0) persistRec();       // anti-perte en cas de plantage
+  updateRecInfo();
+}
+function updateRecInfo() {
+  const avg = rec.movMs > 60000 ? (rec.dist / (rec.movMs / 1000) * 3.6).toFixed(1) : null;
+  $("rec-info").textContent =
+    `${rec.paused ? "⏸" : "⏺"} ${fmtDur(recDurMs())} · ${fmtDist(rec.dist)} · D+ ${Math.round(rec.dplus)} m` +
+    (avg ? ` · ${avg} km/h` : "");
+}
+function recUI(on) {
+  $("rec-bar").classList.toggle("on", on);
+  $("fab-rec").classList.toggle("recording", on);
+  document.body.classList.toggle("rec-on", on);
+}
+function startRec(resume) {
+  if (!resume) {
+    Object.assign(rec, { pts: [], times: [], startT: Date.now(), pausedMs: 0, dist: 0,
+      dplus: 0, dminus: 0, anchor: null, maxSpd: 0, movMs: 0 });
+  }
+  rec.on = true; rec.paused = false; rec.lastT = Date.now();
+  $("rec-pause").textContent = "⏸";
+  recUI(true);
+  if (recLine) { map.removeLayer(recLine); recLine = null; }
+  if (rec.pts.length)
+    recLine = L.polyline(rec.pts.map(p => [p[0], p[1]]), { color: "#ff3b30", weight: 4 }).addTo(map);
+  clearInterval(recTimer);
+  recTimer = setInterval(() => { if (rec.on) updateRecInfo(); }, 1000);
+  $("opt-wake").checked = true; setWake(true);
+  startWatch();
+  updateRecInfo();
+  if (!resume) toast("Enregistrement démarré. Gardez l'app à l'écran (iOS coupe le GPS en arrière-plan) — baissez la luminosité pour la batterie.", 7000);
+}
+function cancelRec() {
+  rec.on = false;
+  clearInterval(recTimer);
+  localStorage.removeItem("rc.rec");
+  recUI(false);
+  if (recLine) { map.removeLayer(recLine); recLine = null; }
+}
+async function saveRecAsTrack(data, name, durMs) {
+  const t = makeTrack(name, data.pts, []);
+  t.times = data.times;
+  t.recStats = { durMs, movMs: data.movMs, maxKmh: data.maxSpd * 3.6 };
+  t.color = COLORS[state.tracks.length % COLORS.length];
+  state.tracks.push(t);
+  await saveTrack(t);
+  drawTrack(t);
+  setActiveTrack(t.id);
+  renderTrackList();
+}
+$("fab-rec").addEventListener("click", () => {
+  if (rec.on) { toast("Enregistrement en cours — ⏸ pause et ⏹ terminer en bas de l'écran"); return; }
+  startRec(false);
+});
+$("rec-pause").addEventListener("click", () => {
+  if (!rec.on) return;
+  rec.paused = !rec.paused;
+  if (rec.paused) { rec.pauseT = Date.now(); $("rec-pause").textContent = "▶"; toast("Enregistrement en pause"); }
+  else { rec.pausedMs += Date.now() - rec.pauseT; rec.lastT = Date.now(); $("rec-pause").textContent = "⏸"; toast("Enregistrement repris"); }
+  persistRec(); updateRecInfo();
+});
+$("rec-stop").addEventListener("click", async () => {
+  if (!rec.on) return;
+  if (rec.pts.length < 2) {
+    if (confirm("Presque aucun point enregistré. Abandonner l'enregistrement ?")) cancelRec();
+    return;
+  }
+  if (!confirm(`Terminer l'enregistrement ?\n${fmtDist(rec.dist)} · ${fmtDur(recDurMs())} · D+ ${Math.round(rec.dplus)} m`)) return;
+  const def = "Rando du " + new Date().toLocaleDateString("fr-FR");
+  const name = prompt("Nom de la trace :", def) || def;
+  await saveRecAsTrack(rec, name, recDurMs());
+  cancelRec();
+  toast("Trace enregistrée ✔ (exportable en GPX pour Strava via ⤓)", 5000);
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && rec.on) persistRec();
+});
 function onPosErr(err) {
   toast(err.code === 1 ? "Autorisez la localisation dans les réglages du navigateur"
     : "Position indisponible (" + err.message + ")");
@@ -1027,3 +1149,19 @@ if (SAFE_VIEW && !SAFE_TRACKS) toast("Redémarrage après incident : vue réinit
 loadTracks();
 updateEstimate();
 refreshStorage();
+
+/* reprise d'un enregistrement interrompu (plantage, rechargement) */
+try {
+  const savedRec = JSON.parse(localStorage.getItem("rc.rec") || "null");
+  if (savedRec && savedRec.pts && savedRec.pts.length > 1) {
+    if (confirm(`Un enregistrement de trace était en cours (${fmtDist(savedRec.dist || 0)}). Le reprendre ?\n(Annuler = l'enregistrer comme trace terminée)`)) {
+      Object.assign(rec, savedRec);
+      startRec(true);
+    } else {
+      const def = "Rando du " + new Date().toLocaleDateString("fr-FR");
+      saveRecAsTrack(savedRec, prompt("Nom de la trace :", def) || def,
+        savedRec.times.length ? Date.parse(savedRec.times[savedRec.times.length - 1]) - savedRec.startT : 0)
+        .then(() => { localStorage.removeItem("rc.rec"); toast("Trace enregistrée ✔"); });
+    }
+  } else if (savedRec) localStorage.removeItem("rc.rec");
+} catch (e) { localStorage.removeItem("rc.rec"); }
