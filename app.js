@@ -84,7 +84,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v8";
+const APP_VERSION = "v9";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -134,6 +134,17 @@ function setLayer(id) {
   state.layerId = id;
   localStorage.setItem("rc.layer", id);
   baseLayer = new OfflineTileLayer(id, { maxZoom: LAYERS[id].maxZoom, attribution: LAYERS[id].attr });
+  /* beaucoup de tuiles en échec → expliquer pourquoi la carte est noire */
+  let errs = 0;
+  baseLayer.on("tileerror", () => {
+    errs++;
+    if (errs !== 8) return;
+    if (!navigator.onLine)
+      toast("Cette zone n'est pas téléchargée pour ce fond de carte (☰ → Cartes pour la télécharger avec du réseau).", 8000);
+    else if (id.startsWith("ign"))
+      toast("Les fonds IGN ne couvrent que la France. Pour l'étranger, choisissez « Satellite Esri (monde) » ou « OpenTopoMap » dans ☰ → Cartes.", 9000);
+  });
+  baseLayer.on("load", () => { errs = 0; });
   baseLayer.addTo(map);
   updateEstimate();
 }
