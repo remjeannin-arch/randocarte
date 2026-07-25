@@ -132,6 +132,11 @@
     z-index: 2000; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 85vw; text-align: center; }
   #toast.show { opacity: .95; }
 
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--txt); }
+  .leaflet-popup-content { margin: 12px 14px; font-size: 14px; }
+  .leaflet-popup-content a { display: block; margin-top: 9px; color: var(--accent);
+    text-decoration: none; font-weight: 600; }
+  .leaflet-popup-close-button { color: var(--muted) !important; }
   .leaflet-control-attribution { background: rgba(26,29,33,.7) !important; color: #888 !important; font-size: 9px !important; }
   .leaflet-control-attribution a { color: #aaa !important; }
   .leaflet-control-zoom { display: none; }

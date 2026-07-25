@@ -84,7 +84,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v9";
+const APP_VERSION = "v10";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -313,7 +313,14 @@ function drawTrack(t) {
       setCursor(nearestIdx(t, e.latlng.lat, e.latlng.lng), false);
     });
     line.addTo(g);
-    L.circleMarker([t.pts[0][0], t.pts[0][1]], { radius: 7, color: "#fff", weight: 2, fillColor: "#51cf66", fillOpacity: 1 }).addTo(g);
+    /* départ : cliquable → itinéraire en voiture vers le point de départ */
+    const s = t.pts[0], coord = `${s[0].toFixed(6)},${s[1].toFixed(6)}`;
+    L.circleMarker([s[0], s[1]], { radius: 9, color: "#fff", weight: 2, fillColor: "#51cf66", fillOpacity: 1, bubblingMouseEvents: false })
+      .bindPopup(
+        `<b>🚩 Départ — ${escapeXml(t.name)}</b>` +
+        `<a href="https://maps.apple.com/?daddr=${coord}&dirflg=d" target="_blank" rel="noopener">🚗 Itinéraire avec Plans</a>` +
+        `<a href="https://www.google.com/maps/dir/?api=1&destination=${coord}&travelmode=driving" target="_blank" rel="noopener">🚗 Itinéraire avec Google Maps</a>`)
+      .addTo(g);
     const e = t.pts[t.pts.length - 1];
     L.circleMarker([e[0], e[1]], { radius: 7, color: "#fff", weight: 2, fillColor: "#ff6b6b", fillOpacity: 1 }).addTo(g);
   }
