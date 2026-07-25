@@ -84,7 +84,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v13";
+const APP_VERSION = "v14";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -315,10 +315,12 @@ function drawTrack(t) {
     });
     line.addTo(g);
     /* départ : cliquable → itinéraire en voiture vers le point de départ */
+    /* marqueur DOM (pas canvas) : toucher fiable sur iOS */
     const s = t.pts[0];
-    L.circleMarker([s[0], s[1]], { radius: 9, color: "#fff", weight: 2, fillColor: "#51cf66", fillOpacity: 1, bubblingMouseEvents: false })
-      .bindPopup(`<b>🚩 Départ — ${escapeXml(t.name)}</b>` + coordLinks(s[0], s[1]))
-      .addTo(g);
+    L.marker([s[0], s[1]], {
+      icon: L.divIcon({ className: "start-icon", iconSize: [22, 22], iconAnchor: [11, 11] }),
+      zIndexOffset: 500,
+    }).bindPopup(`<b>🚩 Départ — ${escapeXml(t.name)}</b>` + coordLinks(s[0], s[1])).addTo(g);
     const e = t.pts[t.pts.length - 1];
     L.circleMarker([e[0], e[1]], { radius: 7, color: "#fff", weight: 2, fillColor: "#ff6b6b", fillOpacity: 1 }).addTo(g);
   }
@@ -364,8 +366,8 @@ function renderTrackList() {
         <div class="fiche-nav">📍 Départ&nbsp;:
           <a href="#" onclick="rcCopy('${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}');return false;">${t.pts[0][0].toFixed(5)}, ${t.pts[0][1].toFixed(5)} 📋</a></div>
         <div class="fiche-nav">🚗 Itinéraire voiture vers le départ&nbsp;:
-          <a href="https://maps.apple.com/?daddr=${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}&dirflg=d" target="_blank" rel="noopener">Plans</a> ·
-          <a href="https://www.google.com/maps/dir/?api=1&destination=${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}&travelmode=driving" target="_blank" rel="noopener">Google&nbsp;Maps</a></div>
+          <a href="https://maps.apple.com/?daddr=${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}&dirflg=d" rel="noopener">Plans</a> ·
+          <a href="https://www.google.com/maps/dir/?api=1&destination=${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}&travelmode=driving" rel="noopener">Google&nbsp;Maps</a></div>
       </div>` : ""}`;
     div.querySelector(".track-head").addEventListener("click", (e) => {
       const a = e.target.getAttribute && e.target.getAttribute("data-a");
@@ -520,10 +522,12 @@ window.rcCopy = (txt) => {
 };
 function coordLinks(lat, lon) {
   const q = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+  /* pas de target="_blank" : échoue en silence dans les PWA iOS ; le lien direct
+     est intercepté par iOS qui ouvre l'app Plans / Google Maps */
   return `<b>📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}</b>` +
     `<a href="#" onclick="rcCopy('${q}');return false;">📋 Copier les coordonnées</a>` +
-    `<a href="https://maps.apple.com/?daddr=${q}&dirflg=d" target="_blank" rel="noopener">🚗 Itinéraire avec Plans</a>` +
-    `<a href="https://www.google.com/maps/dir/?api=1&destination=${q}&travelmode=driving" target="_blank" rel="noopener">🚗 Itinéraire avec Google Maps</a>`;
+    `<a href="https://maps.apple.com/?daddr=${q}&dirflg=d" rel="noopener">🚗 Itinéraire avec Plans</a>` +
+    `<a href="https://www.google.com/maps/dir/?api=1&destination=${q}&travelmode=driving" rel="noopener">🚗 Itinéraire avec Google Maps</a>`;
 }
 /* appui long (ou clic droit) n'importe où sur la carte → coordonnées du point */
 map.on("contextmenu", (e) => {
