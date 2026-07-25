@@ -1,0 +1,17 @@
+{
+  "name": "RandoCarte — cartes & GPX hors ligne",
+  "short_name": "RandoCarte",
+  "description": "Suivi de traces GPX sur cartes IGN/satellite téléchargées à l'avance, 100 % hors ligne.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1a1d21",
+  "theme_color": "#1a1d21",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
