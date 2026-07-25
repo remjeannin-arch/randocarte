@@ -80,6 +80,22 @@ const OfflineTileLayer = L.TileLayer.extend({
   },
 });
 
+/* ================= Mode sans échec =================
+   Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
+   neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
+   est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
+const APP_VERSION = "v8";
+const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
+localStorage.setItem("rc.bootfail", String(bootFails + 1));
+const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
+if (SAFE_VIEW) { localStorage.removeItem("rc.view"); localStorage.removeItem("rc.active"); }
+const bootOk = () => localStorage.setItem("rc.bootfail", "0");
+setTimeout(bootOk, 5000);
+window.addEventListener("pagehide", bootOk);
+window.addEventListener("error", (e) => toast("Erreur : " + e.message, 7000));
+window.addEventListener("unhandledrejection", (e) =>
+  toast("Erreur : " + ((e.reason && e.reason.message) || e.reason), 7000));
+
 /* ================= État ================= */
 const state = {
   layerId: localStorage.getItem("rc.layer") || "ignplan",
@@ -104,7 +120,9 @@ const toast = (msg, ms = 2600) => {
 
 /* ================= Carte ================= */
 const saved = JSON.parse(localStorage.getItem("rc.view") || "null");
-const map = L.map("map", { zoomControl: false, attributionControl: true })
+/* preferCanvas : rendu des tracés sur canvas, bien plus léger que le SVG pour les
+   GPX de plusieurs milliers de points (le SVG faisait planter Safari iOS) */
+const map = L.map("map", { zoomControl: false, attributionControl: true, preferCanvas: true })
   .setView(saved ? saved.c : [45.5, 2.5], saved ? saved.z : 6);
 map.on("moveend", () => {
   localStorage.setItem("rc.view", JSON.stringify({ c: [map.getCenter().lat, map.getCenter().lng], z: map.getZoom() }));
@@ -340,7 +358,13 @@ function renderTrackList() {
         if (state.activeTrackId === t.id) setActiveTrack(null);
         renderTrackList();
       } else {
-        setActiveTrack(t.id === state.activeTrackId ? null : t.id);
+        /* « ouvrir » la rando : activer, zoomer dessus, montrer le profil */
+        setActiveTrack(t.id);
+        zoomToTrack(t);
+        if (t.pts.some(p => p[2] != null)) {
+          $("profile-wrap").classList.add("on");
+          drawProfile();
+        }
       }
     });
     el.appendChild(div);
@@ -391,9 +415,13 @@ async function loadTracks() {
   if (state.activeTrackId && !state.tracks.some(t => t.id === state.activeTrackId)) state.activeTrackId = null;
   /* recalcul systématique à l'ouverture : bénéficie des évolutions de la méthode D+/D− */
   state.tracks.forEach(computeStats);
-  state.tracks.forEach(drawTrack);
+  if (!SAFE_TRACKS) state.tracks.forEach(drawTrack);
   renderTrackList();
   $("fab-profile").style.display = state.activeTrackId ? "" : "none";
+  if (SAFE_TRACKS) {
+    toast("Mode sans échec : traces non affichées après plantages répétés. Essayez de supprimer la trace (☰ → Traces → 🗑).", 9000);
+    return;
+  }
   /* complète après coup les traces enregistrées sans altitude */
   for (const t of state.tracks) {
     if (navigator.onLine && t.pts.length > 1 && !t.pts.some(p => p[2] != null)) {
@@ -951,6 +979,10 @@ netStatus();
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+
+const verEl = document.getElementById("app-ver");
+if (verEl) verEl.textContent = " Version " + APP_VERSION + ".";
+if (SAFE_VIEW && !SAFE_TRACKS) toast("Redémarrage après incident : vue réinitialisée", 5000);
 
 loadTracks();
 updateEstimate();
