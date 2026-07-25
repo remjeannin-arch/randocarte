@@ -84,7 +84,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v15";
+const APP_VERSION = "v16";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -364,8 +364,8 @@ function renderTrackList() {
         <div class="fiche-nav">📍 Départ&nbsp;:
           <a href="#" onclick="rcCopy('${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}');return false;">${t.pts[0][0].toFixed(5)}, ${t.pts[0][1].toFixed(5)} 📋</a></div>
         <div class="fiche-nav">🚗 Itinéraire voiture vers le départ&nbsp;:
-          <a href="https://maps.apple.com/?daddr=${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}&dirflg=d" rel="noopener">Plans</a> ·
-          <a href="https://www.google.com/maps/dir/?api=1&destination=${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}&travelmode=driving" rel="noopener">Google&nbsp;Maps</a></div>
+          <a href="${appleMapsUrl(`${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}`)}" rel="noopener">Plans</a> ·
+          <a href="${googleMapsUrl(`${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}`)}" rel="noopener">Google&nbsp;Maps</a></div>
       </div>` : ""}`;
     div.querySelector(".track-head").addEventListener("click", (e) => {
       const a = e.target.getAttribute && e.target.getAttribute("data-a");
@@ -518,20 +518,53 @@ window.rcCopy = (txt) => {
     .then(() => toast("Coordonnées copiées ✔"))
     .catch(() => prompt("Copiez les coordonnées :", txt));
 };
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+/* sur iPhone/iPad, le schéma maps:// ouvre l'app Plans à coup sûr (le lien web
+   maps.apple.com n'est pas toujours intercepté par Safari) */
+const appleMapsUrl = (q) => IS_IOS ? `maps://?daddr=${q}&dirflg=d` : `https://maps.apple.com/?daddr=${q}&dirflg=d`;
+const googleMapsUrl = (q) => `https://www.google.com/maps/dir/?api=1&destination=${q}&travelmode=driving`;
 function coordLinks(lat, lon) {
   const q = `${lat.toFixed(6)},${lon.toFixed(6)}`;
-  /* pas de target="_blank" : échoue en silence dans les PWA iOS ; le lien direct
-     est intercepté par iOS qui ouvre l'app Plans / Google Maps */
+  /* pas de target="_blank" : échoue en silence dans les PWA iOS */
   return `<b>📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}</b>` +
     `<a href="#" onclick="rcCopy('${q}');return false;">📋 Copier les coordonnées</a>` +
-    `<a href="https://maps.apple.com/?daddr=${q}&dirflg=d" rel="noopener">🚗 Itinéraire avec Plans</a>` +
-    `<a href="https://www.google.com/maps/dir/?api=1&destination=${q}&travelmode=driving" rel="noopener">🚗 Itinéraire avec Google Maps</a>`;
+    `<a href="${appleMapsUrl(q)}" rel="noopener">🚗 Itinéraire avec Plans</a>` +
+    `<a href="${googleMapsUrl(q)}" rel="noopener">🚗 Itinéraire avec Google Maps</a>`;
 }
-/* appui long (ou clic droit) n'importe où sur la carte → coordonnées du point */
+let lastCoordPopup = 0;
+function openCoordPopup(ll) {
+  lastCoordPopup = Date.now();
+  L.popup().setLatLng(ll).setContent(coordLinks(ll.lat, ll.lng)).openOn(map);
+}
+/* clic droit (ordinateur) ou appui long natif (Chrome Android) */
 map.on("contextmenu", (e) => {
   if (drawState.on) return;
-  L.popup().setLatLng(e.latlng).setContent(coordLinks(e.latlng.lat, e.latlng.lng)).openOn(map);
+  if (Date.now() - lastCoordPopup < 1200) return; // déjà ouvert par l'appui long manuel
+  openCoordPopup(e.latlng);
 });
+/* appui long manuel : Safari iOS ne déclenche jamais contextmenu sur la carte */
+(() => {
+  const el = map.getContainer();
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  el.addEventListener("touchstart", (ev) => {
+    if (ev.touches.length !== 1 || drawState.on) { cancel(); return; }
+    sx = ev.touches[0].clientX; sy = ev.touches[0].clientY;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      const ll = map.containerPointToLatLng(
+        map.mouseEventToContainerPoint({ clientX: sx, clientY: sy }));
+      openCoordPopup(ll);
+    }, 550);
+  }, { passive: true });
+  el.addEventListener("touchmove", (ev) => {
+    if (timer && Math.hypot(ev.touches[0].clientX - sx, ev.touches[0].clientY - sy) > 12) cancel();
+  }, { passive: true });
+  el.addEventListener("touchend", cancel, { passive: true });
+  el.addEventListener("touchcancel", cancel, { passive: true });
+})();
 
 /* densifie le tracé (~1 point tous les 40 m) pour un profil de dénivelé précis */
 function densify(pts) {
