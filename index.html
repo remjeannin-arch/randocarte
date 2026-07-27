@@ -256,8 +256,14 @@
     <progress id="dl-progress" value="0" max="100" style="display:none;margin-top:10px"></progress>
     <div id="dl-status"></div>
 
-    <h3>Stockage</h3>
-    <div id="storage-info" style="font-size:13px;color:var(--muted)"></div>
+    <h3>Stockage — à comprendre</h3>
+    <small class="hint">Les cartes et traces sont enregistrées dans la <b>mémoire du navigateur</b> de cet appareil. Elles survivent au mode avion, au redémarrage et fonctionnent sans réseau, <b>mais elles seront perdues</b> si vous effacez les données de Safari/Chrome ou si vous supprimez l'icône de l'app de l'écran d'accueil (iPhone). L'app demande au système de protéger ce stockage, mais la seule copie vraiment durable est la <b>sauvegarde fichier</b> ci-dessous&nbsp;: elle contient toutes vos cartes téléchargées et vos traces dans un seul fichier, déposé dans l'app <b>Fichiers</b> (iPhone) ou <b>Téléchargements</b> (Android). Rangez-le où vous voulez (un dossier par zone, iCloud, ordinateur…) et réimportez-le quand nécessaire — y compris sur un autre appareil. Chaque trace peut aussi être exportée séparément au format GPX universel (bouton ⤓).</small>
+    <div class="row" style="margin-top:8px">
+      <button class="btn primary grow" id="btn-backup">💾 Exporter la sauvegarde</button>
+      <button class="btn grow" id="btn-restore">📂 Importer</button>
+    </div>
+    <input type="file" id="backup-file" style="display:none">
+    <div id="storage-info" style="font-size:13px;color:var(--muted);margin-top:10px"></div>
     <div class="row">
       <button class="btn danger" id="btn-clear-tiles">Vider les cartes téléchargées</button>
     </div>

@@ -111,7 +111,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v18";
+const APP_VERSION = "v19";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -1166,6 +1166,85 @@ async function downloadArea() {
 }
 $("btn-download").addEventListener("click", downloadArea);
 $("btn-cancel").addEventListener("click", () => state.dlAbort && state.dlAbort.abort());
+
+/* ================= Sauvegarde fichier (cartes + traces « en dur ») =================
+   Format .rcz : "RCZ1" (4 o) + longueur JSON (4 o) + index JSON + données des tuiles
+   concaténées. Le Blob assemble des références (pas de copie mémoire), et l'import lit
+   le fichier par tranches — compatible avec les gros fichiers sur iPhone. */
+const RCZ_MAGIC = 0x52435a31;
+async function exportBackup() {
+  toast("Préparation de la sauvegarde…", 8000);
+  const tiles = [];
+  await idb("tiles", "readonly", s => {
+    const req = s.openCursor();
+    req.onsuccess = () => {
+      const c = req.result;
+      if (c) { tiles.push([String(c.key), c.value]); c.continue(); }
+    };
+  });
+  if (!tiles.length && !state.tracks.length) { toast("Rien à sauvegarder pour l'instant"); return; }
+  const index = [], parts = [];
+  let off = 0;
+  for (const [k, blob] of tiles) {
+    index.push({ k, o: off, n: blob.size });
+    parts.push(blob);
+    off += blob.size;
+  }
+  const tracks = state.tracks.map(t =>
+    ({ id: t.id, name: t.name, color: t.color, visible: t.visible, pts: t.pts, wpts: t.wpts, times: t.times }));
+  const metaBytes = new TextEncoder().encode(JSON.stringify({ v: 1, tracks, tiles: index }));
+  const head = new ArrayBuffer(8);
+  const dv = new DataView(head);
+  dv.setUint32(0, RCZ_MAGIC);
+  dv.setUint32(4, metaBytes.length);
+  const blob = new Blob([head, metaBytes, ...parts], { type: "application/octet-stream" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `randocarte-${new Date().toISOString().slice(0, 10)}.rcz`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  toast(`Sauvegarde créée : ${(blob.size / 1048576).toFixed(0)} Mo (${tiles.length.toLocaleString("fr-FR")} tuiles, ${tracks.length} trace(s)) — cherchez-la dans Fichiers/Téléchargements`, 8000);
+}
+async function importBackup(file) {
+  try {
+    const dv = new DataView(await file.slice(0, 8).arrayBuffer());
+    if (dv.getUint32(0) !== RCZ_MAGIC) { toast("Ce fichier n'est pas une sauvegarde RandoCarte (.rcz)"); return; }
+    const metaLen = dv.getUint32(4);
+    const meta = JSON.parse(new TextDecoder().decode(await file.slice(8, 8 + metaLen).arrayBuffer()));
+    const base = 8 + metaLen;
+    for (let i = 0; i < meta.tiles.length; i += 400) {
+      const batch = meta.tiles.slice(i, i + 400);
+      await idb("tiles", "readwrite", s => {
+        for (const t of batch) s.put(file.slice(base + t.o, base + t.o + t.n), t.k);
+      });
+      $("dl-status").textContent = `Import : ${Math.min(i + 400, meta.tiles.length)}/${meta.tiles.length} tuiles…`;
+      await new Promise(r => setTimeout(r));
+    }
+    let newTracks = 0;
+    for (const tr of meta.tracks || []) {
+      if (state.tracks.some(x => x.id === tr.id)) continue;
+      computeStats(tr);
+      if (!tr.color) tr.color = COLORS[state.tracks.length % COLORS.length];
+      if (tr.visible == null) tr.visible = true;
+      state.tracks.push(tr);
+      await saveTrack(tr);
+      drawTrack(tr);
+      newTracks++;
+    }
+    renderTrackList();
+    refreshStorage();
+    $("dl-status").textContent = "";
+    toast(`Sauvegarde importée ✔ ${meta.tiles.length.toLocaleString("fr-FR")} tuiles, ${newTracks} nouvelle(s) trace(s)`, 6000);
+  } catch (err) {
+    toast("Échec de l'import : " + (err.message || err), 6000);
+  }
+}
+$("btn-backup").addEventListener("click", exportBackup);
+$("btn-restore").addEventListener("click", () => $("backup-file").click());
+$("backup-file").addEventListener("change", (e) => {
+  if (e.target.files[0]) importBackup(e.target.files[0]);
+  e.target.value = "";
+});
 
 async function refreshStorage() {
   let count = 0;

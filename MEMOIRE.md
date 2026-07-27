@@ -96,3 +96,4 @@ Web app (PWA) **gratuite et 100 % hors ligne** de randonnée, façon Visorando :
 | v16 | Appui long manuel Safari + schéma `maps://` pour Plans |
 | v17 | Niveaux de zoom à la carte (cases + coûts + préréglages), fond de secours inter-niveaux, sélecteur rapide de fond 🗺️, zoom courant affiché |
 | v18 | Barre d'onglets permanente en bas (dépliable au doigt), FAB ✏️ tracer, **édition de trace** (déplacer/insérer/supprimer/prolonger des points, recalcul altitudes) |
+| v19 | Explication du stockage navigateur + **sauvegarde fichier .rcz** (cartes + traces exportées « en dur » dans Fichiers/Téléchargements, réimportables sur tout appareil) |
