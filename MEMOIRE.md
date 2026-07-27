@@ -94,3 +94,5 @@ Web app (PWA) **gratuite et 100 % hors ligne** de randonnée, façon Visorando :
 | v13-v14 | Enregistrement de trace façon Strava ; fixes toucher/liens iOS |
 | v15 | **Retrait de l'enregistrement** (mis de côté pour la version native) |
 | v16 | Appui long manuel Safari + schéma `maps://` pour Plans |
+| v17 | Niveaux de zoom à la carte (cases + coûts + préréglages), fond de secours inter-niveaux, sélecteur rapide de fond 🗺️, zoom courant affiché |
+| v18 | Barre d'onglets permanente en bas (dépliable au doigt), FAB ✏️ tracer, **édition de trace** (déplacer/insérer/supprimer/prolonger des points, recalcul altitudes) |

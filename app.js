@@ -111,7 +111,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v17";
+const APP_VERSION = "v18";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -335,7 +335,7 @@ function drawTrack(t) {
     const line = L.polyline(t.pts.map(p => [p[0], p[1]]), { color: t.color, weight: 4, bubblingMouseEvents: false });
     /* toucher la trace → montre l'endroit sur le profil de dénivelé */
     line.on("click", (e) => {
-      if (drawState.on) return;
+      if (drawState.on || editState.id) return;
       if (t.id !== state.activeTrackId) setActiveTrack(t.id);
       $("profile-wrap").classList.add("on");
       setCursor(nearestIdx(t, e.latlng.lat, e.latlng.lng), false);
@@ -372,6 +372,7 @@ function renderTrackList() {
         <div class="track-name">${t.name}</div>
         <button data-a="eye" title="Afficher/masquer">${t.visible ? "👁" : "🚫"}</button>
         <button data-a="zoom" title="Zoomer">🔍</button>
+        <button data-a="edit" title="Modifier le tracé">✏️</button>
         <button data-a="exp" title="Exporter en GPX">⤓</button>
         <button data-a="del" title="Supprimer">🗑</button>
       </div>
@@ -399,6 +400,7 @@ function renderTrackList() {
       if (a === "eye") { t.visible = !t.visible; saveTrack(t); drawTrack(t); renderTrackList(); }
       else if (a === "zoom") { zoomToTrack(t); }
       else if (a === "exp") { exportGPX(t); }
+      else if (a === "edit") { if (!t.visible) { t.visible = true; saveTrack(t); } startEdit(t); }
       else if (a === "del") {
         if (!confirm(`Supprimer « ${t.name} » ?`)) return;
         idb("tracks", "readwrite", s => s.delete(t.id));
@@ -525,18 +527,133 @@ function endDraw() {
   if (drawState.line) { map.removeLayer(drawState.line); drawState.line = null; }
   if (drawState.dots) { map.removeLayer(drawState.dots); drawState.dots = null; }
 }
-$("btn-draw").addEventListener("click", () => {
+function startDrawMode() {
+  if (editState.id) { toast("Terminez d'abord l'édition en cours"); return; }
+  if (drawState.on) return;
   drawState.on = true; drawState.pts = [];
   closePanel();
   $("draw-bar").classList.add("on");
   $("hud").style.display = "none";
   redrawDraft();
   toast("Touchez la carte point par point pour dessiner l'itinéraire");
-});
+}
+$("btn-draw").addEventListener("click", startDrawMode);
+$("fab-draw").addEventListener("click", startDrawMode);
 $("draw-undo").addEventListener("click", () => { drawState.pts.pop(); redrawDraft(); });
 $("draw-cancel").addEventListener("click", endDraw);
 map.on("click", (e) => {
   if (drawState.on) { drawState.pts.push([e.latlng.lat, e.latlng.lng]); redrawDraft(); }
+  else if (editState.id) { editState.pts.push([e.latlng.lat, e.latlng.lng]); redrawEdit(); }
+});
+
+/* ================= Édition de tracé ================= */
+const editState = { id: null, pts: [], group: null, line: null };
+function douglasPeucker(pts, tolM) {
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    if (b - a < 2) continue;
+    let maxD = 0, idx = -1;
+    for (let i = a + 1; i < b; i++) {
+      const d = distToSegment(pts[i], pts[a], pts[b]);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > tolM) { keep[idx] = 1; stack.push([a, idx], [idx, b]); }
+  }
+  const out = [];
+  for (let i = 0; i < pts.length; i++) if (keep[i]) out.push([pts[i][0], pts[i][1]]);
+  return out;
+}
+function simplifyPts(pts, maxPts) {
+  let out = pts.map(p => [p[0], p[1]]);
+  let tol = 5;
+  while (out.length > maxPts && tol <= 320) { out = douglasPeucker(pts, tol); tol *= 2; }
+  return out;
+}
+function updateEditInfo() {
+  let d = 0;
+  for (let i = 1; i < editState.pts.length; i++) d += haversine(editState.pts[i - 1], editState.pts[i]);
+  $("edit-info").textContent = `✏️ ${editState.pts.length} pts · ${fmtDist(d)}`;
+}
+function redrawEdit() {
+  if (editState.group) map.removeLayer(editState.group);
+  const g = L.layerGroup();
+  editState.line = L.polyline(editState.pts, { color: "#ffd43b", weight: 4, dashArray: "8 6" }).addTo(g);
+  editState.pts.forEach((p, i) => {
+    const m = L.marker(p, { draggable: true, zIndexOffset: 600,
+      icon: L.divIcon({ className: "edit-vtx", iconSize: [20, 20], iconAnchor: [10, 10] }) }).addTo(g);
+    m.on("drag", () => {
+      const ll = m.getLatLng();
+      editState.pts[i] = [ll.lat, ll.lng];
+      editState.line.setLatLngs(editState.pts);
+    });
+    m.on("dragend", redrawEdit);
+    m.on("click", () => {
+      if (editState.pts.length <= 2) { toast("Un tracé garde au moins 2 points"); return; }
+      if (confirm("Supprimer ce point ?")) { editState.pts.splice(i, 1); redrawEdit(); }
+    });
+  });
+  /* ronds creux entre deux points : toucher pour insérer un point intermédiaire */
+  for (let i = 0; i < editState.pts.length - 1; i++) {
+    const a = editState.pts[i], b = editState.pts[i + 1];
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const m = L.marker(mid, { zIndexOffset: 550,
+      icon: L.divIcon({ className: "edit-mid", iconSize: [15, 15], iconAnchor: [8, 8] }) }).addTo(g);
+    m.on("click", () => { editState.pts.splice(i + 1, 0, mid); redrawEdit(); });
+  }
+  g.addTo(map);
+  editState.group = g;
+  updateEditInfo();
+}
+function startEdit(t) {
+  if (drawState.on || editState.id) return;
+  closePanel();
+  editState.id = t.id;
+  const before = t.pts.length;
+  editState.pts = simplifyPts(t.pts, 120);
+  if (state.polylines.has(t.id)) { map.removeLayer(state.polylines.get(t.id)); state.polylines.delete(t.id); }
+  $("edit-bar").classList.add("on");
+  $("hud").style.display = "none";
+  redrawEdit();
+  if (editState.pts.length > 1)
+    map.fitBounds(L.latLngBounds(editState.pts), { padding: [40, 40] });
+  toast((before > editState.pts.length ? `Tracé simplifié en ${editState.pts.length} points pour l'édition. ` : "") +
+    "Glissez les points jaunes ; point = supprimer ; rond creux = insérer ; carte = prolonger.", 8000);
+}
+function endEditUI() {
+  if (editState.group) { map.removeLayer(editState.group); editState.group = null; }
+  editState.id = null;
+  editState.pts = [];
+  $("edit-bar").classList.remove("on");
+  $("hud").style.display = "";
+}
+$("edit-cancel").addEventListener("click", () => {
+  const t = state.tracks.find(x => x.id === editState.id);
+  endEditUI();
+  if (t) drawTrack(t);
+});
+$("edit-save").addEventListener("click", async () => {
+  const t = state.tracks.find(x => x.id === editState.id);
+  const newPts = editState.pts.slice();
+  endEditUI();
+  if (!t || newPts.length < 2) { if (t) drawTrack(t); return; }
+  const dense = densify(newPts);
+  let eles = null;
+  if (navigator.onLine) {
+    toast("Recalcul des altitudes IGN…", 5000);
+    try { eles = await fetchElevations(dense); }
+    catch (err) { toast("Altitudes indisponibles — tracé enregistré sans profil"); }
+  }
+  t.pts = dense.map((p, i) => [p[0], p[1], eles ? eles[i] : null]);
+  delete t.times;
+  computeStats(t);
+  await saveTrack(t);
+  drawTrack(t);
+  renderTrackList();
+  drawProfile();
+  toast(`Tracé « ${t.name} » modifié ✔ ${fmtDist(t.dist)} · D+ ${t.dplus} m`, 4000);
 });
 
 /* ================= Coordonnées d'un point ================= */
@@ -566,7 +683,7 @@ function openCoordPopup(ll) {
 }
 /* clic droit (ordinateur) ou appui long natif (Chrome Android) */
 map.on("contextmenu", (e) => {
-  if (drawState.on) return;
+  if (drawState.on || editState.id) return;
   if (Date.now() - lastCoordPopup < 1200) return; // déjà ouvert par l'appui long manuel
   openCoordPopup(e.latlng);
 });
@@ -576,7 +693,7 @@ map.on("contextmenu", (e) => {
   let timer = null, sx = 0, sy = 0;
   const cancel = () => { clearTimeout(timer); timer = null; };
   el.addEventListener("touchstart", (ev) => {
-    if (ev.touches.length !== 1 || drawState.on) { cancel(); return; }
+    if (ev.touches.length !== 1 || drawState.on || editState.id) { cancel(); return; }
     sx = ev.touches[0].clientX; sy = ev.touches[0].clientY;
     cancel();
     timer = setTimeout(() => {
@@ -1092,17 +1209,34 @@ $("fab-layers").addEventListener("click", () => {
   buildQuickLayers();
   $("layer-quick").classList.toggle("open");
 });
-$("fab-menu").addEventListener("click", () => {
-  panel.classList.toggle("open");
-  if (panel.classList.contains("open")) { updateEstimate(); refreshStorage(); }
-});
-$("panel-grip").addEventListener("click", closePanel);
+const openPanel = () => {
+  panel.classList.add("open");
+  updateEstimate(); refreshStorage();
+};
+const togglePanel = () => { panel.classList.contains("open") ? closePanel() : openPanel(); };
+$("fab-menu").addEventListener("click", togglePanel);
+$("panel-grip").addEventListener("click", togglePanel);
 map.on("click", closePanel);
 document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => {
+  const already = b.classList.contains("sel");
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("sel", x === b));
   document.querySelectorAll(".tab-page").forEach(p =>
     p.classList.toggle("sel", p.id === "page-" + b.dataset.tab));
+  if (!panel.classList.contains("open")) openPanel();
+  else if (already) closePanel();
 }));
+/* glisser la poignée ou les onglets vers le haut/bas pour ouvrir/fermer */
+let panDragY = null;
+[$("panel-grip"), $("tabs")].forEach(el => {
+  el.addEventListener("touchstart", (e) => { panDragY = e.touches[0].clientY; }, { passive: true });
+  el.addEventListener("touchmove", (e) => {
+    if (panDragY == null) return;
+    const dy = e.touches[0].clientY - panDragY;
+    if (dy < -25 && !panel.classList.contains("open")) { openPanel(); panDragY = null; }
+    else if (dy > 25 && panel.classList.contains("open")) { closePanel(); panDragY = null; }
+  }, { passive: true });
+  el.addEventListener("touchend", () => { panDragY = null; }, { passive: true });
+});
 
 /* liste des fonds */
 (function buildLayerList() {
