@@ -111,7 +111,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v19";
+const APP_VERSION = "v20";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -1292,27 +1292,22 @@ const openPanel = () => {
   panel.classList.add("open");
   updateEstimate(); refreshStorage();
 };
-const togglePanel = () => { panel.classList.contains("open") ? closePanel() : openPanel(); };
-$("fab-menu").addEventListener("click", togglePanel);
-$("panel-grip").addEventListener("click", togglePanel);
+$("fab-menu").addEventListener("click", () => {
+  panel.classList.contains("open") ? closePanel() : openPanel();
+});
+$("panel-grip").addEventListener("click", closePanel);
 map.on("click", closePanel);
 document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => {
-  const already = b.classList.contains("sel");
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("sel", x === b));
   document.querySelectorAll(".tab-page").forEach(p =>
     p.classList.toggle("sel", p.id === "page-" + b.dataset.tab));
-  if (!panel.classList.contains("open")) openPanel();
-  else if (already) closePanel();
 }));
-/* glisser la poignée ou les onglets vers le haut/bas pour ouvrir/fermer */
+/* glisser vers le bas sur la poignée ou les onglets pour fermer */
 let panDragY = null;
 [$("panel-grip"), $("tabs")].forEach(el => {
   el.addEventListener("touchstart", (e) => { panDragY = e.touches[0].clientY; }, { passive: true });
   el.addEventListener("touchmove", (e) => {
-    if (panDragY == null) return;
-    const dy = e.touches[0].clientY - panDragY;
-    if (dy < -25 && !panel.classList.contains("open")) { openPanel(); panDragY = null; }
-    else if (dy > 25 && panel.classList.contains("open")) { closePanel(); panDragY = null; }
+    if (panDragY != null && e.touches[0].clientY - panDragY > 30) { closePanel(); panDragY = null; }
   }, { passive: true });
   el.addEventListener("touchend", () => { panDragY = null; }, { passive: true });
 });
@@ -1363,7 +1358,18 @@ window.addEventListener("offline", netStatus);
 map.on("zoomend", netStatus);
 netStatus();
 
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+/* mise à jour : on force la vérification du SW à chaque ouverture, et quand une
+   nouvelle version prend la main, la page se recharge une fois pour que interface
+   et code restent toujours synchronisés */
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").then(reg => reg.update()).catch(() => {});
+  let swReloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (swReloaded) return;
+    swReloaded = true;
+    location.reload();
+  });
+}
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
 const verEl = document.getElementById("app-ver");
