@@ -34,6 +34,8 @@
   .hud-box b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
   .hud-box span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
   #hud .off { display: none; }
+  #hud-nav { text-align: left; font-size: 12.5px; line-height: 1.55; font-variant-numeric: tabular-nums; }
+  #hud-nav b { display: inline; font-size: 12.5px; }
 
   /* ---- boutons flottants ---- */
   #fabs { position: absolute; right: 10px; top: calc(var(--safe-top) + 8px);
@@ -184,9 +186,10 @@
   <div class="hud-box off" id="hud-alt"><b>–</b><span>alt. m</span></div>
   <div class="hud-box off" id="hud-acc"><b>–</b><span>précision</span></div>
   <div class="hud-box off" id="hud-gap"><b>–</b><span>écart trace</span></div>
-  <div class="hud-box off" id="hud-dplus"><b>–</b><span>D+ fait</span></div>
-  <div class="hud-box off" id="hud-dminus"><b>–</b><span>D− fait</span></div>
-  <div class="hud-box off" id="hud-rest"><b>–</b><span>restant</span></div>
+  <div class="hud-box off" id="hud-nav">
+    <div id="nav-done"></div>
+    <div id="nav-rest"></div>
+  </div>
 </div>
 
 <div id="fabs">

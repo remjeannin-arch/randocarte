@@ -111,7 +111,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v20";
+const APP_VERSION = "v21";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -198,6 +198,10 @@ function distToSegment(p, a, b) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 const fmtDist = (m) => m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + " km" : Math.round(m) + " m";
+const fmtDur = (ms) => {
+  const m = Math.round(ms / 60000), h = Math.floor(m / 60);
+  return h ? `${h}h${String(m % 60).padStart(2, "0")}` : `${Math.max(m, 1)} min`;
+};
 
 /* ================= GPX ================= */
 function parseGPX(text, name) {
@@ -430,6 +434,7 @@ function zoomToTrack(t) {
 }
 function setActiveTrack(id) {
   state.activeTrackId = id;
+  nearestOnTrack.idx = -1;
   if (id) localStorage.setItem("rc.active", id); else localStorage.removeItem("rc.active");
   $("fab-profile").style.display = id ? "" : "none";
   if (!id) { $("profile-wrap").classList.remove("on"); }
@@ -940,33 +945,82 @@ function updateHeadingVisual() {
 }
 
 const nearestOnTrack = { idx: -1, gap: null };
+let snapMarker = null, snapLine = null;
+function clearSnap() {
+  if (snapMarker) { map.removeLayer(snapMarker); snapMarker = null; }
+  if (snapLine) { map.removeLayer(snapLine); snapLine = null; }
+}
+/* index du segment de trace le plus proche ; privilégie la continuité de progression
+   (évite de sauter sur la branche du retour dans un aller-retour) */
+function snapToTrack(t, pt) {
+  const seek = (from, to) => {
+    let best = Infinity, idx = from;
+    for (let i = from; i < to; i++) {
+      const d = distToSegment(pt, t.pts[i], t.pts[i + 1]);
+      if (d < best) { best = d; idx = i; }
+    }
+    return { idx, d: best };
+  };
+  const global = seek(0, t.pts.length - 1);
+  const prev = nearestOnTrack.idx;
+  if (prev >= 0 && prev < t.pts.length - 1) {
+    const local = seek(Math.max(0, prev - 40), Math.min(t.pts.length - 1, prev + 200));
+    if (local.d <= global.d + 15) return local;
+  }
+  return global;
+}
 function updateNavHUD() {
   const t = activeTrack();
   const show = (id, on) => $(id).classList.toggle("off", !on);
-  if (!state.pos) { ["hud-speed","hud-alt","hud-acc","hud-gap","hud-dplus","hud-dminus","hud-rest"].forEach(i => show(i, false)); return; }
+  if (!state.pos) {
+    ["hud-speed","hud-alt","hud-acc","hud-gap","hud-nav"].forEach(i => show(i, false));
+    clearSnap();
+    return;
+  }
   const p = state.pos;
   show("hud-speed", true); show("hud-alt", p.alt != null); show("hud-acc", true);
   $("hud-speed").querySelector("b").textContent = p.speed != null ? (p.speed * 3.6).toFixed(1) : "0.0";
   if (p.alt != null) $("hud-alt").querySelector("b").textContent = Math.round(p.alt);
   $("hud-acc").querySelector("b").textContent = "±" + Math.round(p.acc) + "m";
   if (t && t.pts.length > 1) {
-    let best = Infinity, bestIdx = 0;
-    const pt = [p.lat, p.lon];
-    for (let i = 0; i < t.pts.length - 1; i++) {
-      const d = distToSegment(pt, t.pts[i], t.pts[i + 1]);
-      if (d < best) { best = d; bestIdx = i; }
-    }
-    nearestOnTrack.idx = bestIdx; nearestOnTrack.gap = best;
-    show("hud-gap", true); show("hud-rest", true);
+    const snap = snapToTrack(t, [p.lat, p.lon]);
+    nearestOnTrack.idx = snap.idx; nearestOnTrack.gap = snap.d;
+    show("hud-gap", true);
     const gapEl = $("hud-gap").querySelector("b");
-    gapEl.textContent = fmtDist(best);
-    gapEl.style.color = best > 100 ? "var(--err)" : best > 40 ? "var(--warn)" : "var(--ok)";
-    $("hud-rest").querySelector("b").textContent = fmtDist(Math.max(0, t.dist - t.cum[bestIdx]));
+    gapEl.textContent = fmtDist(snap.d);
+    gapEl.style.color = snap.d > 100 ? "var(--err)" : snap.d > 40 ? "var(--warn)" : "var(--ok)";
+
+    /* bilan parcouru / restant */
+    const done = t.cum[snap.idx], rest = Math.max(0, t.dist - done);
     const hasD = t.cumDplus && t.dplus > 0;
-    show("hud-dplus", hasD); show("hud-dminus", hasD && !!t.cumDminus);
-    if (hasD) $("hud-dplus").querySelector("b").textContent = t.cumDplus[bestIdx] + " m";
-    if (hasD && t.cumDminus) $("hud-dminus").querySelector("b").textContent = t.cumDminus[bestIdx] + " m";
-  } else { show("hud-gap", false); show("hud-dplus", false); show("hud-dminus", false); show("hud-rest", false); }
+    const dpDone = hasD ? t.cumDplus[snap.idx] : 0;
+    const dmDone = hasD ? t.cumDminus[snap.idx] : 0;
+    const dpRest = hasD ? Math.max(0, t.dplus - dpDone) : 0;
+    const dmRest = hasD ? Math.max(0, t.dminus - dmDone) : 0;
+    const restMs = (rest / 4000 + dpRest / 300 + dmRest / 500) * 3600000;
+    show("hud-nav", true);
+    $("nav-done").innerHTML = `▶ Parcouru <b>${fmtDist(done)}</b>` +
+      (hasD ? ` · D+ <b>${dpDone}</b> · D− <b>${dmDone} m</b>` : "");
+    $("nav-rest").innerHTML = `⏳ Restant <b>${fmtDist(rest)}</b>` +
+      (hasD ? ` · D+ <b>${dpRest}</b> · D− <b>${dmRest} m</b>` : "") +
+      ` · ≈ <b>${fmtDur(restMs)}</b>`;
+
+    /* projection de la position sur la trace */
+    const sp = [t.pts[snap.idx][0], t.pts[snap.idx][1]];
+    const here = [p.lat, p.lon];
+    if (!snapMarker) {
+      snapMarker = L.circleMarker(sp, { radius: 5, color: "#fff", weight: 2, fillColor: "#2b7de9",
+        fillOpacity: 1, bubblingMouseEvents: false }).addTo(map);
+      snapLine = L.polyline([here, sp], { color: "#fff", weight: 2, dashArray: "4 5", opacity: .7,
+        interactive: false }).addTo(map);
+    } else {
+      snapMarker.setLatLng(sp);
+      snapLine.setLatLngs([here, sp]);
+    }
+  } else {
+    show("hud-gap", false); show("hud-nav", false);
+    clearSnap();
+  }
   if ($("profile-wrap").classList.contains("on")) drawProfile();
 }
 
