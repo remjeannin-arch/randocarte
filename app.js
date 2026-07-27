@@ -31,6 +31,15 @@ const tileKey = (l, z, x, y) => `${l}|${z}|${x}|${y}`;
 const getTile = (k) => idb("tiles", "readonly", s => s.get(k));
 const putTile = (k, blob) => idb("tiles", "readwrite", s => s.put(blob, k));
 
+/* cherche une tuile parente stockée (zoom inférieur) pour servir de fond de secours */
+async function ancestorTile(layerId, z, x, y) {
+  for (let k = 1; k <= 6 && z - k >= 3; k++) {
+    const blob = await getTile(tileKey(layerId, z - k, x >> k, y >> k)).catch(() => null);
+    if (blob) return { blob, k, sx: x - ((x >> k) << k), sy: y - ((y >> k) << k) };
+  }
+  return null;
+}
+
 /* ================= Fonds de carte ================= */
 const geopf = (layer, fmt, style) =>
   `https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer}` +
@@ -58,23 +67,41 @@ const OfflineTileLayer = L.TileLayer.extend({
   createTile(coords, done) {
     const img = document.createElement("img");
     img.alt = "";
-    const key = tileKey(this._layerId, coords.z, coords.x, coords.y);
+    const layerId = this._layerId;
+    const key = tileKey(layerId, coords.z, coords.x, coords.y);
+    const show = (src) => {
+      img.onload = () => { if (src.startsWith("blob:")) URL.revokeObjectURL(src); done(null, img); };
+      img.onerror = () => done(new Error("img"), img);
+      img.src = src;
+    };
+    /* fond de secours : agrandit la tuile du niveau inférieur le plus proche,
+       pour que les zooms non téléchargés restent lisibles hors ligne */
+    const fallback = () => {
+      ancestorTile(layerId, coords.z, coords.x, coords.y).then(anc => {
+        if (!anc) { done(new Error("offline"), img); return; }
+        const im = new Image();
+        im.onload = () => {
+          URL.revokeObjectURL(im.src);
+          const cv = document.createElement("canvas");
+          cv.width = 256; cv.height = 256;
+          const cx = cv.getContext("2d");
+          const size = 256 / (1 << anc.k);
+          cx.imageSmoothingEnabled = true;
+          cx.drawImage(im, anc.sx * size, anc.sy * size, size, size, 0, 0, 256, 256);
+          show(cv.toDataURL());
+        };
+        im.onerror = () => done(new Error("anc"), img);
+        im.src = URL.createObjectURL(anc.blob);
+      }).catch(() => done(new Error("idb"), img));
+    };
     getTile(key).then(blob => {
-      if (blob) {
-        img.src = URL.createObjectURL(blob);
-        img.onload = () => { URL.revokeObjectURL(img.src); done(null, img); };
-        img.onerror = () => done(new Error("blob"), img);
-      } else if (navigator.onLine) {
-        const url = this.getTileUrl(coords);
-        fetch(url).then(r => { if (!r.ok) throw 0; return r.blob(); }).then(b => {
+      if (blob) show(URL.createObjectURL(blob));
+      else if (navigator.onLine) {
+        fetch(this.getTileUrl(coords)).then(r => { if (!r.ok) throw 0; return r.blob(); }).then(b => {
           if (state.autocache) putTile(key, b).catch(() => {});
-          img.src = URL.createObjectURL(b);
-          img.onload = () => { URL.revokeObjectURL(img.src); done(null, img); };
-          img.onerror = () => done(new Error("img"), img);
-        }).catch(() => done(new Error("net"), img));
-      } else {
-        done(new Error("offline"), img);
-      }
+          show(URL.createObjectURL(b));
+        }).catch(fallback);
+      } else fallback();
     }).catch(() => done(new Error("idb"), img));
     return img;
   },
@@ -84,7 +111,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v16";
+const APP_VERSION = "v17";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -900,43 +927,87 @@ function lat2y(lat, z) {
   const r = lat * Math.PI / 180;
   return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 2 ** z);
 }
-function tileRanges(zMax) {
-  const b = map.getBounds();
-  const zMin = Math.min(Math.max(map.getZoom(), 6), zMax);
-  const ranges = [];
-  for (let z = zMin; z <= zMax; z++)
-    ranges.push({ z, x1: lon2x(b.getWest(), z), x2: lon2x(b.getEast(), z),
-                  y1: lat2y(b.getNorth(), z), y2: lat2y(b.getSouth(), z) });
-  return ranges;
-}
-/* nombre de tuiles calculé SANS matérialiser la liste : à faible zoom la liste
+/* les tuiles sont comptées SANS matérialiser la liste : à faible zoom la liste
    ferait des millions d'entrées et Safari iOS tue la page (plantage récurrent) */
-function countTiles(zMax) {
-  return tileRanges(zMax).reduce((n, r) => n + (r.x2 - r.x1 + 1) * (r.y2 - r.y1 + 1), 0);
+function tileRanges(zooms) {
+  const b = map.getBounds();
+  return zooms.map(z => ({ z, x1: lon2x(b.getWest(), z), x2: lon2x(b.getEast(), z),
+                           y1: lat2y(b.getNorth(), z), y2: lat2y(b.getSouth(), z) }));
 }
-function listTiles(zMax) {
+const countForRange = (r) => (r.x2 - r.x1 + 1) * (r.y2 - r.y1 + 1);
+const countTiles = (zooms) => tileRanges(zooms).reduce((n, r) => n + countForRange(r), 0);
+function listTiles(zooms) {
   const list = [];
-  for (const r of tileRanges(zMax))
+  for (const r of tileRanges(zooms))
     for (let x = r.x1; x <= r.x2; x++) for (let y = r.y1; y <= r.y2; y++) list.push([r.z, x, y]);
   return list;
 }
-function updateEstimate() {
-  const zMax = +$("zmax").value;
-  $("zmax-val").textContent = zMax;
-  const n = countTiles(zMax);
-  const mb = (n * LAYERS[state.layerId].kb / 1024).toFixed(1);
-  $("dl-estimate").textContent =
-    `≈ ${n.toLocaleString("fr-FR")} tuiles (${mb} Mo) — zoom ${Math.min(map.getZoom(), zMax)} → ${zMax}, fond « ${LAYERS[state.layerId].name} »`;
-  $("btn-download").disabled = n > 40000;
-  if (n > 40000) $("dl-status").textContent = "Zone trop grande : zoomez davantage ou réduisez le détail.";
+
+/* ---- choix des niveaux de zoom à télécharger ---- */
+const ZOOM_LEVELS = [
+  [10, "vue d'une région"],
+  [11, "grand massif"],
+  [12, "massif, vallées"],
+  [13, "vallée en détail"],
+  [14, "approche, sentiers visibles"],
+  [15, "rando, bon détail"],
+  [16, "détail fin (recommandé)"],
+  [17, "très fin (très lourd)"],
+];
+const ZOOM_PRESETS = { rando: [12, 14, 16], leger: [12, 15], complet: [12, 13, 14, 15, 16] };
+let selZooms = JSON.parse(localStorage.getItem("rc.zooms") || "null") || ZOOM_PRESETS.rando.slice();
+
+function buildZoomRows() {
+  const el = $("zoom-levels");
+  el.innerHTML = "";
+  for (const [z, label] of ZOOM_LEVELS) {
+    const row = document.createElement("label");
+    row.className = "zoom-row";
+    row.innerHTML = `<input type="checkbox" data-z="${z}" ${selZooms.includes(z) ? "checked" : ""}>
+      <span class="zoom-z">z${z}</span><span class="zoom-label">${label}</span>
+      <span class="zoom-count" id="zc-${z}"></span>`;
+    row.querySelector("input").addEventListener("change", () => {
+      selZooms = [...el.querySelectorAll("input:checked")].map(i => +i.dataset.z);
+      localStorage.setItem("rc.zooms", JSON.stringify(selZooms));
+      updateEstimate();
+    });
+    el.appendChild(row);
+  }
 }
-$("zmax").addEventListener("input", updateEstimate);
+document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => {
+  selZooms = ZOOM_PRESETS[b.dataset.preset].slice();
+  localStorage.setItem("rc.zooms", JSON.stringify(selZooms));
+  buildZoomRows();
+  updateEstimate();
+}));
+
+function updateEstimate() {
+  if (!$("zoom-levels").children.length) return;
+  const kb = LAYERS[state.layerId].kb;
+  let total = 0;
+  for (const [z] of ZOOM_LEVELS) {
+    const el = $("zc-" + z);
+    if (!el) continue;
+    const n = countForRange(tileRanges([z])[0]);
+    const mo = n * kb / 1024;
+    el.textContent = `${n.toLocaleString("fr-FR")} tuiles · ${mo >= 10 ? mo.toFixed(0) : mo.toFixed(1)} Mo`;
+    el.parentElement.classList.toggle("zsel", selZooms.includes(z));
+    if (selZooms.includes(z)) total += n;
+  }
+  const mb = total * kb / 1024;
+  $("dl-estimate").textContent = selZooms.length
+    ? `Total : ${total.toLocaleString("fr-FR")} tuiles ≈ ${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} Mo — fond « ${LAYERS[state.layerId].name} », zone affichée`
+    : "Cochez au moins un niveau de zoom.";
+  $("btn-download").disabled = !selZooms.length || total > 40000;
+  $("dl-status").textContent = total > 40000 ? "Zone trop grande : réduisez la zone ou décochez des niveaux." : "";
+}
 
 async function downloadArea() {
   if (!navigator.onLine) { toast("Connexion nécessaire pour télécharger"); return; }
-  const zMax = +$("zmax").value;
-  if (countTiles(zMax) > 40000) { toast("Zone trop grande : zoomez davantage"); return; }
-  const tiles = listTiles(zMax);
+  const zooms = selZooms.filter(z => z <= LAYERS[state.layerId].maxZoom);
+  if (!zooms.length) { toast("Cochez au moins un niveau de zoom"); return; }
+  if (countTiles(zooms) > 40000) { toast("Zone trop grande : réduisez la zone ou les niveaux"); return; }
+  const tiles = listTiles(zooms);
   const layerId = state.layerId, tpl = LAYERS[layerId].url;
   const ctrl = new AbortController();
   state.dlAbort = ctrl;
@@ -998,7 +1069,29 @@ $("btn-clear-tiles").addEventListener("click", async () => {
 
 /* ================= Panneau / onglets ================= */
 const panel = $("panel");
-const closePanel = () => panel.classList.remove("open");
+const closePanel = () => { panel.classList.remove("open"); $("layer-quick").classList.remove("open"); };
+
+/* sélecteur rapide de fond de carte (bouton 🗺️) */
+function buildQuickLayers() {
+  const el = $("layer-quick");
+  el.innerHTML = "";
+  for (const [id, l] of Object.entries(LAYERS)) {
+    const b = document.createElement("button");
+    b.textContent = l.name;
+    if (id === state.layerId) b.className = "sel";
+    b.addEventListener("click", () => {
+      setLayer(id);
+      document.querySelectorAll('input[name="layer"]').forEach(r => { r.checked = r.value === id; });
+      el.classList.remove("open");
+      toast(l.name);
+    });
+    el.appendChild(b);
+  }
+}
+$("fab-layers").addEventListener("click", () => {
+  buildQuickLayers();
+  $("layer-quick").classList.toggle("open");
+});
 $("fab-menu").addEventListener("click", () => {
   panel.classList.toggle("open");
   if (panel.classList.contains("open")) { updateEstimate(); refreshStorage(); }
@@ -1049,10 +1142,12 @@ document.addEventListener("visibilitychange", () => {
 function netStatus() {
   const el = $("netdot");
   el.classList.toggle("offline", !navigator.onLine);
-  el.textContent = navigator.onLine ? "En ligne" : "Hors ligne — cartes locales";
+  el.textContent = (navigator.onLine ? "En ligne" : "Hors ligne — cartes locales") +
+    " · zoom " + map.getZoom();
 }
 window.addEventListener("online", netStatus);
 window.addEventListener("offline", netStatus);
+map.on("zoomend", netStatus);
 netStatus();
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -1062,6 +1157,7 @@ const verEl = document.getElementById("app-ver");
 if (verEl) verEl.textContent = " Version " + APP_VERSION + ".";
 if (SAFE_VIEW && !SAFE_TRACKS) toast("Redémarrage après incident : vue réinitialisée", 5000);
 
+buildZoomRows();
 loadTracks();
 updateEstimate();
 refreshStorage();
