@@ -166,6 +166,7 @@
     z-index: 2000; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 85vw; text-align: center; }
   #toast.show { opacity: .95; }
 
+  .shade-tiles { mix-blend-mode: multiply; }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--txt); }
   .leaflet-popup-content { margin: 12px 14px; font-size: 14px; }
   .leaflet-popup-content a { display: block; margin-top: 9px; padding: 3px 0; color: var(--accent);
@@ -243,6 +244,7 @@
   <div class="tab-page" id="page-cartes">
     <h3>Fond de carte</h3>
     <div id="layer-list"></div>
+    <div class="switch-row"><span>⛰️ Relief (estompage du terrain)</span><input type="checkbox" id="opt-shade"></div>
 
     <h3>Télécharger pour le hors-ligne</h3>
     <small class="hint">Cadrez la zone de votre rando, puis cochez les niveaux de zoom à emporter — chaque ligne affiche son coût pour la zone cadrée, et le zoom actuel est indiqué en bas à gauche de la carte. <b>3 niveaux suffisent</b>&nbsp;: entre deux niveaux téléchargés, la carte affiche automatiquement une version agrandie du niveau du dessous.</small>

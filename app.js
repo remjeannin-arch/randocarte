@@ -56,6 +56,10 @@ const LAYERS = {
               maxZoom: 19, kb: 35, attr: "© Esri, Maxar" },
   opentopo: { name: "OpenTopoMap", url: "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
               maxZoom: 17, kb: 30, attr: "© OSM, OpenTopoMap (CC-BY-SA)" },
+  /* superposition (pas un fond) : ombrage du relief, couverture mondiale */
+  shade:    { name: "Relief (estompage)", overlay: true,
+              url: "https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}",
+              maxZoom: 14, kb: 12, attr: "" },
 };
 
 /* Couche Leaflet : IndexedDB d'abord, réseau ensuite (avec mise en cache) */
@@ -111,7 +115,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v21";
+const APP_VERSION = "v22";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -126,6 +130,7 @@ window.addEventListener("unhandledrejection", (e) =>
 /* ================= État ================= */
 const state = {
   layerId: localStorage.getItem("rc.layer") || "ignplan",
+  shade: localStorage.getItem("rc.shade") !== "0",
   tracks: [],                 // {id,name,color,pts:[[lat,lon,ele],...],wpts,dist,dplus,dminus,cum:[],visible}
   activeTrackId: localStorage.getItem("rc.active") || null,
   polylines: new Map(),       // id -> L.LayerGroup
@@ -177,6 +182,27 @@ function setLayer(id) {
   updateEstimate();
 }
 setLayer(state.layerId);
+
+/* superposition « relief » : estompage mondial fondu sur le fond (multiply) ;
+   au-delà du zoom 14, Leaflet agrandit les tuiles z14 (maxNativeZoom) */
+let shadeLayer = null;
+function setShade(on) {
+  state.shade = on;
+  localStorage.setItem("rc.shade", on ? "1" : "0");
+  if (on && !shadeLayer) {
+    shadeLayer = new OfflineTileLayer("shade",
+      { maxNativeZoom: 14, maxZoom: 19, opacity: 0.55, zIndex: 5, className: "shade-tiles" });
+    shadeLayer.addTo(map);
+  } else if (!on && shadeLayer) {
+    map.removeLayer(shadeLayer);
+    shadeLayer = null;
+  }
+  const cb = document.getElementById("opt-shade");
+  if (cb) cb.checked = on;
+  updateEstimate();
+}
+if (state.shade) setShade(true);
+$("opt-shade").addEventListener("change", (e) => setShade(e.target.checked));
 
 /* ================= Géométrie ================= */
 const R = 6371000;
@@ -395,6 +421,8 @@ function renderTrackList() {
         <div>▼ Point bas<b>${t.lo != null ? t.lo.toLocaleString("fr-FR") + " m" : "–"}</b></div>
         <div class="fiche-nav">📍 Départ&nbsp;:
           <a href="#" onclick="rcCopy('${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}');return false;">${t.pts[0][0].toFixed(5)}, ${t.pts[0][1].toFixed(5)} 📋</a></div>
+        <div class="fiche-nav">⛰️ <a href="3d.html#${t.id}">Vue 3D du parcours</a>
+          <span style="color:var(--muted)">(connexion nécessaire)</span></div>
         <div class="fiche-nav">🚗 Itinéraire voiture vers le départ&nbsp;:
           <a href="${appleMapsUrl(`${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}`)}" rel="noopener">Plans</a> ·
           <a href="${googleMapsUrl(`${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}`)}" rel="noopener">Google&nbsp;Maps</a></div>
@@ -1166,8 +1194,14 @@ function updateEstimate() {
     if (selZooms.includes(z)) total += n;
   }
   const mb = total * kb / 1024;
+  let shadeTxt = "";
+  if (state.shade && selZooms.length) {
+    const sz = selZooms.filter(z => z <= LAYERS.shade.maxZoom);
+    const n = countTiles(sz.length ? sz : [Math.min(13, ...selZooms)]);
+    shadeTxt = ` + relief ≈ ${Math.max(1, Math.round(n * LAYERS.shade.kb / 1024))} Mo`;
+  }
   $("dl-estimate").textContent = selZooms.length
-    ? `Total : ${total.toLocaleString("fr-FR")} tuiles ≈ ${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} Mo — fond « ${LAYERS[state.layerId].name} », zone affichée`
+    ? `Total : ${total.toLocaleString("fr-FR")} tuiles ≈ ${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} Mo — fond « ${LAYERS[state.layerId].name} », zone affichée${shadeTxt}`
     : "Cochez au moins un niveau de zoom.";
   $("btn-download").disabled = !selZooms.length || total > 40000;
   $("dl-status").textContent = total > 40000 ? "Zone trop grande : réduisez la zone ou décochez des niveaux." : "";
@@ -1178,32 +1212,38 @@ async function downloadArea() {
   const zooms = selZooms.filter(z => z <= LAYERS[state.layerId].maxZoom);
   if (!zooms.length) { toast("Cochez au moins un niveau de zoom"); return; }
   if (countTiles(zooms) > 40000) { toast("Zone trop grande : réduisez la zone ou les niveaux"); return; }
-  const tiles = listTiles(zooms);
   const layerId = state.layerId, tpl = LAYERS[layerId].url;
+  let jobs = listTiles(zooms).map(t => ({ layer: layerId, tpl, t }));
+  /* le relief est téléchargé avec (plafonné au zoom 14, il est agrandi au-delà) */
+  if (state.shade) {
+    const sz = zooms.filter(z => z <= LAYERS.shade.maxZoom);
+    jobs = jobs.concat(listTiles(sz.length ? sz : [Math.min(13, ...zooms)])
+      .map(t => ({ layer: "shade", tpl: LAYERS.shade.url, t })));
+  }
   const ctrl = new AbortController();
   state.dlAbort = ctrl;
   $("btn-download").style.display = "none";
   $("btn-cancel").style.display = "";
   $("dl-progress").style.display = "";
   let done = 0, failed = 0, skipped = 0;
-  const urlFor = ([z, x, y]) => tpl.replace("{z}", z).replace("{x}", x).replace("{y}", y);
-  const queue = tiles.slice();
+  const urlFor = (j) => j.tpl.replace("{z}", j.t[0]).replace("{x}", j.t[1]).replace("{y}", j.t[2]);
+  const queue = jobs.slice();
   const worker = async () => {
     while (queue.length && !ctrl.signal.aborted) {
-      const t = queue.shift();
-      const key = tileKey(layerId, t[0], t[1], t[2]);
+      const j = queue.shift();
+      const key = tileKey(j.layer, j.t[0], j.t[1], j.t[2]);
       try {
         if (await getTile(key)) { skipped++; }
         else {
-          const r = await fetch(urlFor(t), { signal: ctrl.signal });
+          const r = await fetch(urlFor(j), { signal: ctrl.signal });
           if (!r.ok) throw 0;
           await putTile(key, await r.blob());
         }
       } catch (e) { if (!ctrl.signal.aborted) failed++; }
       done++;
-      if (done % 20 === 0 || done === tiles.length) {
-        $("dl-progress").value = (done / tiles.length) * 100;
-        $("dl-status").textContent = `${done}/${tiles.length} tuiles… ${failed ? failed + " échecs" : ""}`;
+      if (done % 20 === 0 || done === jobs.length) {
+        $("dl-progress").value = (done / jobs.length) * 100;
+        $("dl-status").textContent = `${done}/${jobs.length} tuiles… ${failed ? failed + " échecs" : ""}`;
       }
     }
   };
@@ -1326,6 +1366,7 @@ function buildQuickLayers() {
   const el = $("layer-quick");
   el.innerHTML = "";
   for (const [id, l] of Object.entries(LAYERS)) {
+    if (l.overlay) continue;
     const b = document.createElement("button");
     b.textContent = l.name;
     if (id === state.layerId) b.className = "sel";
@@ -1337,6 +1378,15 @@ function buildQuickLayers() {
     });
     el.appendChild(b);
   }
+  const sh = document.createElement("button");
+  sh.textContent = (state.shade ? "✓ " : "") + "⛰️ Relief (estompage)";
+  sh.style.borderTop = "1px solid #3a4048";
+  sh.addEventListener("click", () => {
+    setShade(!state.shade);
+    buildQuickLayers();
+    toast(state.shade ? "Relief activé" : "Relief coupé");
+  });
+  el.appendChild(sh);
 }
 $("fab-layers").addEventListener("click", () => {
   buildQuickLayers();
@@ -1370,6 +1420,7 @@ let panDragY = null;
 (function buildLayerList() {
   const el = $("layer-list");
   for (const [id, l] of Object.entries(LAYERS)) {
+    if (l.overlay) continue;
     const lab = document.createElement("label");
     lab.className = "layer-opt";
     lab.innerHTML = `<input type="radio" name="layer" value="${id}" ${id === state.layerId ? "checked" : ""}>

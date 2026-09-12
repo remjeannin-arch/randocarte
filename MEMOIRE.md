@@ -97,3 +97,6 @@ Web app (PWA) **gratuite et 100 % hors ligne** de randonnée, façon Visorando :
 | v17 | Niveaux de zoom à la carte (cases + coûts + préréglages), fond de secours inter-niveaux, sélecteur rapide de fond 🗺️, zoom courant affiché |
 | v18 | Barre d'onglets permanente en bas (dépliable au doigt), FAB ✏️ tracer, **édition de trace** (déplacer/insérer/supprimer/prolonger des points, recalcul altitudes) |
 | v19 | Explication du stockage navigateur + **sauvegarde fichier .rcz** (cartes + traces exportées « en dur » dans Fichiers/Téléchargements, réimportables sur tout appareil) |
+| v20 | Suppression barre du bas, panneau via ☰ ; app.js réseau d'abord + rechargement auto (fin des décalages interface/code) |
+| v21 | Projection continue de la position sur la trace + panneau Parcouru/Restant (km, D+/D−, temps restant estimé) |
+| v22 | **Relief 2D** (estompage mondial Esri, fondu multiply, inclus dans les téléchargements ≤ z14) + **Vue 3D** (3d.html : MapLibre GL, terrain Terrarium AWS, fond satellite/IGN drapé, trace, survol animé — prototype en ligne) |
