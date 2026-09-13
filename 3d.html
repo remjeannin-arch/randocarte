@@ -20,7 +20,15 @@
     background: #2c313a; color: #e8eaed; cursor: pointer; text-decoration: none; font-weight: 600;
     display: flex; align-items: center; justify-content: center; }
   #bar button svg { display: block; }
-  #bar #btn-play, #bar #btn-done3 { background: #a3d65c; color: #17220b; }
+  #bar #btn-play, #bar #btn-done3, #bar button.on { background: #a3d65c; color: #17220b; }
+
+  /* étiquettes de sommets (façon PeakVisor) */
+  .poi3 { pointer-events: none; white-space: nowrap; color: #fff; font-size: 11px; font-weight: 600;
+    letter-spacing: .2px; text-shadow: 0 1px 2px #000, 0 0 5px rgba(0,0,0,.95);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .poi3 span { color: #ffd43b; font-size: 9px; }
+  .poi3.col span { color: #7ecbff; font-size: 8.5px; letter-spacing: -1px; }
+  .poi3 i { font-style: normal; font-weight: 400; opacity: .85; font-size: 10px; }
   #tname { flex: 1; font-size: 13px; font-weight: 600; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   #msg { position: absolute; left: 50%; top: 45%; transform: translate(-50%,-50%); z-index: 20;
@@ -44,6 +52,7 @@
 <div id="bar">
   <a href="./" title="Retour à la carte">‹</a>
   <span id="tname">Vue 3D</span>
+  <button id="btn-peaks3" title="Noms des sommets"></button>
   <button id="btn-loc" title="Ma position">🧭</button>
   <button id="btn-prof" title="Profil altimétrique">📈</button>
   <button id="btn-fond" title="Changer de fond">🛰️</button>
@@ -72,6 +81,8 @@ const ICO3 = {
 };
 const ico3 = (n, s = 17) =>
   `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO3[n]}</svg>`;
+ICO3.mtn = '<path d="M3 19h18"/><path d="M4 19l6-11 4 7 2.5-4L21 19"/>';
+$("btn-peaks3").innerHTML = ico3("mtn");
 $("btn-loc").innerHTML = ico3("nav");
 $("btn-prof").innerHTML = ico3("chart");
 $("btn-fond").innerHTML = ico3("layers");
@@ -444,7 +455,7 @@ let fondIdx = 0;
   /* ================= Tracer un itinéraire sur le relief ================= */
   const draw3 = { on: false, pts: [] };
   const setBarMode = (drawing) => {
-    ["btn-loc", "btn-prof", "btn-fond", "btn-fit", "btn-play", "btn-draw3"]
+    ["btn-loc", "btn-prof", "btn-fond", "btn-fit", "btn-play", "btn-draw3", "btn-peaks3"]
       .forEach(i => { $(i).style.display = drawing ? "none" : ""; });
     ["btn-undo3", "btn-cancel3", "btn-done3"]
       .forEach(i => { $(i).style.display = drawing ? "" : "none"; });
@@ -484,6 +495,88 @@ let fondIdx = 0;
     draw3.pts.push([e.lngLat.lat, e.lngLat.lng]);
     redrawDraft3();
   });
+
+  /* ================= Sommets nommés sur le relief (façon PeakVisor) ================= */
+  let peaksOn = localStorage.getItem("rc.peaks") === "1";
+  let peakMarkers = [], peakTimer = null, lastPeakBox = "", memPois = new Map();
+  const loadPoisDB = () => new Promise((res) => {
+    try {
+      const rq = indexedDB.open("randocarte");
+      rq.onsuccess = () => {
+        try {
+          const g = rq.result.transaction("pois", "readonly").objectStore("pois").getAll();
+          g.onsuccess = () => res(g.result || []);
+          g.onerror = () => res([]);
+        } catch (e) { res([]); }
+      };
+      rq.onerror = () => res([]);
+    } catch (e) { res([]); }
+  });
+  const savePoisDB = (nodes) => {
+    try {
+      const rq = indexedDB.open("randocarte");
+      rq.onsuccess = () => {
+        try {
+          const s = rq.result.transaction("pois", "readwrite").objectStore("pois");
+          for (const n of nodes) s.put(n, n.id);
+        } catch (e) {}
+      };
+    } catch (e) {}
+  };
+  async function fetchPeaks3(b) {
+    const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+    const q = `[out:json][timeout:25];(node["natural"="peak"]["name"](${bbox});` +
+      `node["natural"="saddle"]["name"](${bbox});node["mountain_pass"="yes"]["name"](${bbox}););out body 250;`;
+    const r = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST", body: "data=" + encodeURIComponent(q),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+    if (!r.ok) throw 0;
+    const j = await r.json();
+    const nodes = (j.elements || []).filter(e => e.tags && e.tags.name).map(e => ({
+      id: e.id, lat: e.lat, lon: e.lon, name: e.tags.name,
+      ele: parseFloat(e.tags.ele) || null,
+      type: e.tags.natural === "peak" ? "peak" : "col",
+    }));
+    nodes.forEach(n => memPois.set(n.id, n));
+    savePoisDB(nodes);
+  }
+  async function refreshPeaks3() {
+    peakMarkers.forEach(m => m.remove());
+    peakMarkers = [];
+    if (!peaksOn) return;
+    const b = map.getBounds();
+    const key = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(v => v.toFixed(2)).join(",");
+    if (navigator.onLine && key !== lastPeakBox) {
+      try { await fetchPeaks3(b); lastPeakBox = key; } catch (e) {}
+    }
+    (await loadPoisDB()).forEach(p => { if (!memPois.has(p.id)) memPois.set(p.id, p); });
+    const inBox = [...memPois.values()].filter(p =>
+      p.lat > b.getSouth() && p.lat < b.getNorth() && p.lon > b.getWest() && p.lon < b.getEast());
+    inBox.sort((a, c) => (c.ele || 0) - (a.ele || 0));
+    const max = map.getZoom() >= 13 ? 70 : 40;
+    for (const p of inBox.slice(0, max)) {
+      const el = document.createElement("div");
+      el.className = "poi3" + (p.type === "col" ? " col" : "");
+      el.innerHTML = `<span>${p.type === "peak" ? "▲" : ")("}</span> ${p.name}${p.ele ? ` <i>${Math.round(p.ele)}</i>` : ""}`;
+      peakMarkers.push(new maplibregl.Marker({ element: el, anchor: "bottom", offset: [0, -3] })
+        .setLngLat([p.lon, p.lat]).addTo(map));
+    }
+  }
+  map.on("moveend", () => {
+    if (!peaksOn) return;
+    clearTimeout(peakTimer);
+    peakTimer = setTimeout(refreshPeaks3, 700);
+  });
+  $("btn-peaks3").addEventListener("click", () => {
+    peaksOn = !peaksOn;
+    $("btn-peaks3").classList.toggle("on", peaksOn);
+    refreshPeaks3();
+  });
+  if (peaksOn) {
+    $("btn-peaks3").classList.add("on");
+    map.on("load", () => setTimeout(refreshPeaks3, 800));
+  }
 })();
 </script>
 </body>

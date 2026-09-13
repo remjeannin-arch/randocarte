@@ -1,6 +1,6 @@
 /* Service worker RandoCarte — met l'application elle-même en cache pour un démarrage 100 % hors ligne.
    Les tuiles de carte, elles, sont gérées dans IndexedDB par app.js. */
-const VERSION = "randocarte-v26";
+const VERSION = "randocarte-v27";
 const SHELL = [
   "./",
   "./index.html",
