@@ -257,6 +257,10 @@ function draw() {
   const dpr = window.devicePixelRatio || 1;
   const W = innerWidth, H = innerHeight;
   cvs.width = W * dpr; cvs.height = H * dpr;
+  /* indispensable : sans taille CSS explicite, le canvas s'affiche à sa taille
+     interne (× dpr) et seul le coin supérieur gauche est visible */
+  cvs.style.width = W + "px";
+  cvs.style.height = H + "px";
   const ctx = cvs.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const ppd = W / FOV;                       /* pixels par degré d'azimut */

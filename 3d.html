@@ -610,7 +610,7 @@ let fondIdx = 0;
   });
   if (peaksOn) {
     $("btn-peaks3").classList.add("on");
-    map.on("load", () => setTimeout(refreshPeaks3, 800));
+    map.on("load", () => setTimeout(() => refreshPeaks3(true), 900));
   }
 })();
 </script>
