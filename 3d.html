@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>RandoCarte — Vue 3D</title>
+<title>Randox — Vue 3D</title>
 <meta name="theme-color" content="#1a1d21">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
@@ -17,8 +17,10 @@
     display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: rgba(26,29,33,.92);
     border-radius: 12px; padding: 7px 9px; backdrop-filter: blur(6px); }
   #bar a, #bar button { border: none; border-radius: 9px; padding: 8px 11px; font-size: 14px;
-    background: #2c313a; color: #e8eaed; cursor: pointer; text-decoration: none; font-weight: 600; }
-  #bar #btn-play { background: #4dabf7; color: #fff; }
+    background: #2c313a; color: #e8eaed; cursor: pointer; text-decoration: none; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; }
+  #bar button svg { display: block; }
+  #bar #btn-play, #bar #btn-done3 { background: #a3d65c; color: #17220b; }
   #tname { flex: 1; font-size: 13px; font-weight: 600; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   #msg { position: absolute; left: 50%; top: 45%; transform: translate(-50%,-50%); z-index: 20;
@@ -45,8 +47,12 @@
   <button id="btn-loc" title="Ma position">🧭</button>
   <button id="btn-prof" title="Profil altimétrique">📈</button>
   <button id="btn-fond" title="Changer de fond">🛰️</button>
+  <button id="btn-draw3" title="Tracer un itinéraire">✏️</button>
   <button id="btn-fit" title="Recentrer">⤢</button>
   <button id="btn-play" title="Survoler le parcours">▶</button>
+  <button id="btn-undo3" title="Annuler le dernier point" style="display:none">↩︎</button>
+  <button id="btn-cancel3" title="Abandonner" style="display:none">✕</button>
+  <button id="btn-done3" title="Terminer le tracé" style="display:none">✓</button>
 </div>
 <div id="prof3d-wrap"><button id="prof3d-close">✕</button><canvas id="prof3d"></canvas></div>
 <div id="msg"></div>
@@ -54,10 +60,28 @@
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+/* icônes SVG (trait) */
+const ICO3 = {
+  nav: '<polygon points="3 11 21 3 13 21 11 13 3 11"/>',
+  chart: '<path d="M3 4v16h18"/><path d="M6.5 16l4.5-7 3.5 3.5 4.5-6.5"/>',
+  layers: '<polygon points="12 3 21 8 12 13 3 8"/><polyline points="3 12.5 12 17.5 21 12.5"/><polyline points="3 16.5 12 21.5 21 16.5"/>',
+  pencil: '<path d="M16.5 3.5a2.6 2.6 0 0 1 4 4L7 21l-5 1 1-5Z"/>',
+  fit: '<path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/>',
+  play: '<polygon points="8 5 19 12 8 19" fill="currentColor" stroke="none"/>',
+  pause: '<rect x="7" y="5" width="3.5" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="13.5" y="5" width="3.5" height="14" rx="1" fill="currentColor" stroke="none"/>',
+};
+const ico3 = (n, s = 17) =>
+  `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO3[n]}</svg>`;
+$("btn-loc").innerHTML = ico3("nav");
+$("btn-prof").innerHTML = ico3("chart");
+$("btn-fond").innerHTML = ico3("layers");
+$("btn-draw3").innerHTML = ico3("pencil");
+$("btn-fit").innerHTML = ico3("fit");
+$("btn-play").innerHTML = ico3("play");
 const showMsg = (html) => { const m = $("msg"); m.innerHTML = html; m.style.display = "block"; };
 
 if (!navigator.onLine) {
-  showMsg("La vue 3D nécessite une connexion internet (terrain en relief chargé en direct).<br><br><a href='./' style='color:#4dabf7'>‹ Retour à la carte</a>");
+  showMsg("La vue 3D nécessite une connexion internet (terrain en relief chargé en direct).<br><br><a href='./' style='color:#a3d65c'>‹ Retour à la carte</a>");
 }
 
 /* ---- lecture de la trace dans la base de l'app ---- */
@@ -124,24 +148,31 @@ let fondIdx = 0;
     map = new maplibregl.Map({
       container: "map3d",
       center, zoom, pitch: 60, bearing: -25, maxPitch: 78,
+      antialias: true,
       attributionControl: { compact: true },
       style: {
         version: 8,
         sources: {
           fond: { type: "raster", tiles: [FONDS[0].tiles], tileSize: 256, maxzoom: 18, attribution: FONDS[0].attr + " · terrain © Mapzen/AWS" },
           fond2: { type: "raster", tiles: [FONDS[1].tiles], tileSize: 256, maxzoom: 18 },
-          dem: { type: "raster-dem", tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"], encoding: "terrarium", tileSize: 256, maxzoom: 13 },
+          /* maxzoom 14 : relief nettement plus fin qu'en 13 (surtout en survol rapproché) */
+          dem: { type: "raster-dem", tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"], encoding: "terrarium", tileSize: 256, maxzoom: 14 },
+          demhs: { type: "raster-dem", tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"], encoding: "terrarium", tileSize: 256, maxzoom: 14 },
         },
         layers: [
           { id: "bg", type: "background", paint: { "background-color": "#0d0f11" } },
           { id: "fond", type: "raster", source: "fond" },
           { id: "fond2", type: "raster", source: "fond2", layout: { visibility: "none" } },
+          /* ombrage léger par-dessus le fond : accentue le modelé du terrain drapé */
+          { id: "hs", type: "hillshade", source: "demhs",
+            paint: { "hillshade-exaggeration": 0.35, "hillshade-shadow-color": "#1a2410",
+                     "hillshade-highlight-color": "#ffffff", "hillshade-accent-color": "#2f3d1e" } },
         ],
         terrain: { source: "dem", exaggeration: 1.3 },
       },
     });
   } catch (e) {
-    showMsg("La 3D (WebGL) n'est pas disponible sur cet appareil.<br><br><a href='./' style='color:#4dabf7'>‹ Retour à la carte</a>");
+    showMsg("La 3D (WebGL) n'est pas disponible sur cet appareil.<br><br><a href='./' style='color:#a3d65c'>‹ Retour à la carte</a>");
     return;
   }
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
@@ -158,6 +189,13 @@ let fondIdx = 0;
 
   map.on("load", () => {
     const addPos = () => {
+      /* brouillon de tracé dessiné au doigt sur le relief */
+      map.addSource("draft", { type: "geojson", data: EMPTY });
+      map.addLayer({ id: "draft-line", type: "line", source: "draft",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#ffd43b", "line-width": 4, "line-dasharray": [2, 1.6] } });
+      map.addLayer({ id: "draft-pts", type: "circle", source: "draft",
+        paint: { "circle-radius": 5, "circle-color": "#ffd43b", "circle-stroke-color": "#1a1d21", "circle-stroke-width": 2 } });
       map.addSource("pos", { type: "geojson", data: EMPTY });
       map.addLayer({ id: "pos", type: "circle", source: "pos",
         paint: { "circle-radius": 7, "circle-color": "#2b7de9", "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
@@ -186,6 +224,7 @@ let fondIdx = 0;
     addPos();
     /* toucher la trace en 3D → curseur sur le profil */
     map.on("click", "trace-hit", (e) => {
+      if (draw3.on) return;
       if (!$("prof3d-wrap").classList.contains("on")) toggleProf(true);
       setCursor(nearestIdx(e.lngLat.lat, e.lngLat.lng), false);
     });
@@ -196,7 +235,7 @@ let fondIdx = 0;
     fondIdx = 1 - fondIdx;
     map.setLayoutProperty("fond", "visibility", fondIdx === 0 ? "visible" : "none");
     map.setLayoutProperty("fond2", "visibility", fondIdx === 1 ? "visible" : "none");
-    $("btn-fond").textContent = FONDS[1 - fondIdx].icon;
+    $("btn-fond").title = "Fond : " + FONDS[fondIdx].name;
   });
   $("btn-fit").addEventListener("click", () => { stopFly(); fitAll(); });
 
@@ -227,7 +266,7 @@ let fondIdx = 0;
   const stopFly = () => {
     playing = false;
     if (raf) cancelAnimationFrame(raf);
-    $("btn-play").textContent = "▶";
+    $("btn-play").innerHTML = ico3("play");
   };
   $("btn-play").addEventListener("click", () => {
     if (!pts) return;
@@ -235,7 +274,7 @@ let fondIdx = 0;
     playing = true;
     smoothedBearing = null;
     if (dcur >= dist) dcur = 0;
-    $("btn-play").textContent = "⏸";
+    $("btn-play").innerHTML = ico3("pause");
     stepFly();
   });
   map.on("mousedown", stopFly);
@@ -392,7 +431,7 @@ let fondIdx = 0;
       drawProf();
       return;
     }
-    $("btn-loc").style.background = "#4dabf7";
+    $("btn-loc").style.background = "#a3d65c";
     watchId = navigator.geolocation.watchPosition((g) => {
       const s = map.getSource("pos");
       if (s) s.setData({ type: "Feature",
@@ -400,6 +439,50 @@ let fondIdx = 0;
       if (pts) { posIdx = nearestIdx(g.coords.latitude, g.coords.longitude); drawProf(); }
     }, () => { $("btn-loc").style.background = ""; watchId = null; },
     { enableHighAccuracy: true, maximumAge: 2000, timeout: 30000 });
+  });
+
+  /* ================= Tracer un itinéraire sur le relief ================= */
+  const draw3 = { on: false, pts: [] };
+  const setBarMode = (drawing) => {
+    ["btn-loc", "btn-prof", "btn-fond", "btn-fit", "btn-play", "btn-draw3"]
+      .forEach(i => { $(i).style.display = drawing ? "none" : ""; });
+    ["btn-undo3", "btn-cancel3", "btn-done3"]
+      .forEach(i => { $(i).style.display = drawing ? "" : "none"; });
+  };
+  const redrawDraft3 = () => {
+    const s = map.getSource("draft");
+    if (s) s.setData(draw3.pts.length
+      ? { type: "Feature", geometry: { type: "LineString", coordinates: draw3.pts.map(p => [p[1], p[0]]) } }
+      : EMPTY);
+    let d = 0;
+    for (let i = 1; i < draw3.pts.length; i++) d += haversine(draw3.pts[i - 1], draw3.pts[i]);
+    $("tname").textContent = draw3.on
+      ? `Tracé · ${draw3.pts.length} pt${draw3.pts.length > 1 ? "s" : ""} · ${d >= 1000 ? (d / 1000).toFixed(1) + " km" : Math.round(d) + " m"}`
+      : (track ? track.name : "Vue 3D");
+  };
+  $("btn-draw3").addEventListener("click", () => {
+    stopFly();
+    draw3.on = true; draw3.pts = [];
+    setBarMode(true);
+    redrawDraft3();
+  });
+  $("btn-undo3").addEventListener("click", () => { draw3.pts.pop(); redrawDraft3(); });
+  $("btn-cancel3").addEventListener("click", () => {
+    draw3.on = false; draw3.pts = [];
+    setBarMode(false);
+    redrawDraft3();
+  });
+  $("btn-done3").addEventListener("click", () => {
+    if (draw3.pts.length < 2) return;
+    const name = prompt("Nom du tracé :", "Mon itinéraire 3D") || "Mon itinéraire 3D";
+    /* le brouillon est finalisé par l'app principale (altitudes IGN + stats) */
+    localStorage.setItem("rc.draft", JSON.stringify({ name, pts: draw3.pts }));
+    location.href = "./";
+  });
+  map.on("click", (e) => {
+    if (!draw3.on) return;
+    draw3.pts.push([e.lngLat.lat, e.lngLat.lng]);
+    redrawDraft3();
   });
 })();
 </script>

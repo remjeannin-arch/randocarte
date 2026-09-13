@@ -3,23 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>RandoCarte — cartes & GPX hors ligne</title>
-<meta name="theme-color" content="#1a1d21">
+<title>Randox — explorez plus loin</title>
+<meta name="theme-color" content="#171b14">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="RandoCarte">
+<meta name="apple-mobile-web-app-title" content="Randox">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="vendor/leaflet.css">
 <style>
   :root {
-    --bg: #1a1d21; --panel: #23272d; --panel2: #2c313a; --txt: #e8eaed;
-    --muted: #9aa0a6; --accent: #4dabf7; --ok: #51cf66; --warn: #ffa94d; --err: #ff6b6b;
+    --bg: #171b14; --panel: #1c2118; --panel2: #2b3324; --txt: #eaeee4;
+    --muted: #9aa694; --accent: #a3d65c; --on-accent: #17220b;
+    --ok: #51cf66; --warn: #ffa94d; --err: #ff6b6b;
+    --glass: rgba(21, 26, 18, .78); --glass-border: 1px solid rgba(255, 255, 255, .08);
     --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px);
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  .ico { display: block; flex: none; }
+  .btn .ico, .fiche-nav .ico, #layer-quick .ico { display: inline-block; vertical-align: -3px; }
+  .nav-lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg); color: var(--txt); overscroll-behavior: none; }
@@ -29,7 +34,8 @@
   /* ---- HUD ---- */
   #hud { position: absolute; top: calc(var(--safe-top) + 8px); left: 8px; right: 60px;
     display: flex; gap: 6px; z-index: 800; pointer-events: none; flex-wrap: wrap; }
-  .hud-box { background: rgba(26,29,33,.85); backdrop-filter: blur(6px); border-radius: 10px;
+  .hud-box { background: var(--glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: var(--glass-border); border-radius: 13px;
     padding: 5px 10px; font-size: 12px; line-height: 1.25; min-width: 62px; text-align: center; }
   .hud-box b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
   .hud-box span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
@@ -37,40 +43,50 @@
   #hud-nav { text-align: left; font-size: 12.5px; line-height: 1.55; font-variant-numeric: tabular-nums; }
   #hud-nav b { display: inline; font-size: 12.5px; }
 
-  /* ---- boutons flottants ---- */
+  /* ---- boutons flottants (deux grappes : haut-droit et bas-droit) ---- */
   #fabs { position: absolute; right: 10px; top: calc(var(--safe-top) + 8px);
-    display: flex; flex-direction: column; gap: 10px; z-index: 900; }
-  .fab { width: 46px; height: 46px; border-radius: 14px; border: none; cursor: pointer;
-    background: rgba(35,39,45,.92); color: var(--txt); font-size: 21px;
-    box-shadow: 0 2px 8px rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
-  .fab.active { background: var(--accent); color: #fff; }
-  .fab:active { transform: scale(.94); }
+    display: flex; flex-direction: column; gap: 8px; z-index: 900; }
+  #fabs-bottom { position: absolute; right: 10px; bottom: calc(var(--safe-bottom) + 26px);
+    display: flex; flex-direction: column; gap: 8px; z-index: 900; transition: bottom .25s ease; }
+  #profile-wrap.on ~ #fabs-bottom { bottom: calc(var(--safe-bottom) + 190px); }
+  .fab { width: 48px; height: 48px; border-radius: 17px; border: var(--glass-border); cursor: pointer;
+    background: var(--glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    color: var(--txt); font-size: 20px; box-shadow: 0 2px 12px rgba(0,0,0,.35);
+    display: flex; align-items: center; justify-content: center;
+    transition: transform .1s ease, background .15s ease; }
+  .fab.active { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+  .fab:active { transform: scale(.92); }
+  #fab-3d { font-size: 15px; font-weight: 800; letter-spacing: .4px; }
 
   #netdot { position: absolute; left: 10px; bottom: calc(var(--safe-bottom) + 12px); z-index: 800;
-    font-size: 11px; background: rgba(26,29,33,.85); padding: 4px 9px; border-radius: 20px; color: var(--muted); }
+    font-size: 10.5px; background: var(--glass); backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px); border: var(--glass-border);
+    padding: 4px 10px; border-radius: 999px; color: var(--muted); }
   #netdot::before { content: "●"; margin-right: 5px; color: var(--ok); }
   #netdot.offline::before { color: var(--err); }
 
   /* ---- panneau bas ---- */
   /* panneau bas : masqué par défaut, ouvert par le bouton ☰ */
   #panel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1000;
-    background: var(--panel); border-radius: 18px 18px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,.5);
+    background: var(--panel); border-radius: 22px 22px 0 0;
+    border-top: 1px solid rgba(255,255,255,.07); box-shadow: 0 -6px 26px rgba(0,0,0,.55);
     transform: translateY(102%); transition: transform .25s ease;
     max-height: 78vh; max-height: 78dvh; display: flex; flex-direction: column; padding-bottom: var(--safe-bottom); }
   #panel.open { transform: translateY(0); }
-  #panel-grip { width: 44px; height: 4px; background: #4a5058; border-radius: 2px; margin: 8px auto 2px; flex: none; }
-  #tabs { display: flex; gap: 4px; padding: 8px 12px 0; flex: none; }
+  #panel-grip { width: 40px; height: 4px; background: #4a5058; border-radius: 2px; margin: 9px auto 2px; flex: none; }
+  #tabs { display: flex; margin: 8px 14px 0; padding: 4px; background: var(--panel2);
+    border-radius: 999px; flex: none; }
   #tabs button { flex: 1; background: none; border: none; color: var(--muted); font-size: 14px;
-    padding: 9px 4px; border-radius: 10px; cursor: pointer; font-weight: 600; }
-  #tabs button.sel { background: var(--panel2); color: var(--txt); }
+    padding: 9px 4px; border-radius: 999px; cursor: pointer; font-weight: 600; transition: background .15s; }
+  #tabs button.sel { background: #3c462c; color: var(--txt); }
   .tab-page { overflow-y: auto; padding: 12px 14px 18px; display: none; -webkit-overflow-scrolling: touch; }
   .tab-page.sel { display: block; }
   h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 18px 0 8px; }
   h3:first-child { margin-top: 2px; }
 
   .btn { display: inline-flex; align-items: center; gap: 7px; background: var(--panel2); color: var(--txt);
-    border: none; border-radius: 10px; padding: 10px 14px; font-size: 14px; cursor: pointer; font-weight: 500; }
-  .btn.primary { background: var(--accent); color: #fff; }
+    border: none; border-radius: 13px; padding: 11px 14px; font-size: 14px; cursor: pointer; font-weight: 600; }
+  .btn.primary { background: var(--accent); color: var(--on-accent); }
   .btn.danger { background: #5c2b2b; color: #ffb3b3; }
   .btn.wide { width: 100%; justify-content: center; }
   .btn:disabled { opacity: .45; }
@@ -79,12 +95,13 @@
   small.hint { color: var(--muted); display: block; margin-top: 4px; line-height: 1.4; }
 
   /* traces */
-  .track { background: var(--panel2); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+  .track { background: var(--panel2); border-radius: 15px; padding: 11px 13px; margin-bottom: 8px; }
   .track-head { display: flex; align-items: center; gap: 10px; }
   .track-dot { width: 14px; height: 14px; border-radius: 4px; flex: none; }
   .track-name { flex: 1; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .track-stats { color: var(--muted); font-size: 12px; margin-top: 3px; }
-  .track button { background: none; border: none; color: var(--muted); font-size: 17px; cursor: pointer; padding: 4px 6px; }
+  .track button { background: none; border: none; color: var(--muted); cursor: pointer; padding: 5px; }
+  .track button:active { color: var(--txt); }
   .track.activeTrack { outline: 2px solid var(--accent); }
   .track-fiche { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 9px;
     font-size: 11px; color: var(--muted); }
@@ -95,7 +112,7 @@
 
   /* couches */
   .layer-opt { display: flex; align-items: center; gap: 10px; background: var(--panel2);
-    border-radius: 12px; padding: 11px 12px; margin-bottom: 7px; cursor: pointer; font-size: 14px; }
+    border-radius: 15px; padding: 12px 13px; margin-bottom: 7px; cursor: pointer; font-size: 14px; }
   .layer-opt input { accent-color: var(--accent); width: 18px; height: 18px; }
   .layer-size { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
@@ -115,35 +132,39 @@
     text-align: center; line-height: 1.3; }
 
   /* sélecteur rapide de fond */
-  #layer-quick { position: absolute; right: 64px; top: calc(var(--safe-top) + 60px); z-index: 950;
-    display: none; flex-direction: column; gap: 4px; background: rgba(26,29,33,.96);
-    border-radius: 12px; padding: 7px; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+  #layer-quick { position: absolute; right: 66px; top: calc(var(--safe-top) + 60px); z-index: 950;
+    display: none; flex-direction: column; gap: 4px; background: var(--glass);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: var(--glass-border);
+    border-radius: 16px; padding: 7px; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
   #layer-quick.open { display: flex; }
   #layer-quick button { border: none; border-radius: 9px; padding: 10px 13px; background: none;
     color: var(--txt); font-size: 14px; text-align: left; cursor: pointer; }
-  #layer-quick button.sel { background: var(--accent); color: #fff; }
+  #layer-quick button.sel { background: var(--accent); color: var(--on-accent); }
   #dl-status { font-size: 13px; color: var(--muted); margin-top: 6px; min-height: 18px; }
 
   .switch-row { display: flex; align-items: center; justify-content: space-between;
-    background: var(--panel2); border-radius: 12px; padding: 12px; margin-bottom: 8px; font-size: 14px; }
+    background: var(--panel2); border-radius: 15px; padding: 12px 13px; margin-bottom: 8px; font-size: 14px; }
   .switch-row input { width: 20px; height: 20px; accent-color: var(--accent); }
 
   /* profil altitude */
   #profile-wrap { position: absolute; left: 8px; right: 8px; bottom: calc(var(--safe-bottom) + 44px);
-    z-index: 700; background: rgba(26,29,33,.88); border-radius: 12px; padding: 6px 8px 2px; display: none; }
+    z-index: 700; background: var(--glass); backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px); border: var(--glass-border);
+    border-radius: 15px; padding: 6px 8px 2px; display: none; }
   #profile-wrap.on { display: block; }
   #profile { width: 100%; height: 120px; display: block; touch-action: none; cursor: crosshair; }
   #profile-close { position: absolute; top: 2px; right: 6px; background: none; border: none; color: var(--muted); font-size: 16px; z-index: 1; }
 
   /* barres de création et d'édition de tracé */
-  #draw-bar, #edit-bar { position: absolute; top: calc(var(--safe-top) + 8px); left: 8px; right: 64px;
-    z-index: 950; display: none; gap: 7px; align-items: center; background: rgba(26,29,33,.94);
-    border-radius: 12px; padding: 8px 10px; box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+  #draw-bar, #edit-bar { position: absolute; top: calc(var(--safe-top) + 8px); left: 8px; right: 66px;
+    z-index: 950; display: none; gap: 7px; align-items: center; background: var(--glass);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: var(--glass-border);
+    border-radius: 15px; padding: 8px 10px; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
   #draw-bar.on, #edit-bar.on { display: flex; }
   #draw-info, #edit-info { flex: 1; font-size: 13px; font-variant-numeric: tabular-nums; }
   #draw-bar button, #edit-bar button { border: none; border-radius: 9px; padding: 8px 12px; font-size: 15px;
     background: var(--panel2); color: var(--txt); cursor: pointer; }
-  #draw-bar #draw-done, #edit-bar #edit-save { background: var(--accent); color: #fff; font-weight: 600; }
+  #draw-bar #draw-done, #edit-bar #edit-save { background: var(--accent); color: var(--on-accent); font-weight: 700; }
 
   /* points d'édition de tracé */
   .edit-vtx { background: #ffd43b; border: 3px solid #1a1d21; border-radius: 50%;
@@ -157,7 +178,7 @@
     border-bottom: 30px solid rgba(77,171,247,.35); margin-left: 0; display: none; }
   .loc-dot { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px;
     background: #2b7de9; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
-  .wpt-icon { font-size: 20px; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+  .wpt-icon { color: #ffd43b; filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
   .start-icon { background: #51cf66; border: 3px solid #fff; border-radius: 50%;
     box-shadow: 0 1px 6px rgba(0,0,0,.5); }
 
@@ -167,11 +188,17 @@
   #toast.show { opacity: .95; }
 
   .shade-tiles { mix-blend-mode: multiply; }
+  /* échelle de distance */
+  .leaflet-control-scale { margin-left: 10px !important; margin-bottom: 38px !important; }
+  .leaflet-control-scale-line { background: rgba(21,24,29,.55) !important;
+    border: 1px solid rgba(255,255,255,.4) !important; border-top: none !important;
+    color: #d6dae0 !important; font-size: 9.5px !important; text-shadow: none !important; }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--txt); }
   .leaflet-popup-content { margin: 12px 14px; font-size: 14px; }
-  .leaflet-popup-content a { display: block; margin-top: 9px; padding: 3px 0; color: var(--accent);
-    text-decoration: none; font-weight: 600; touch-action: manipulation;
-    -webkit-user-select: none; user-select: none; }
+  .leaflet-popup-content a { display: flex; align-items: center; gap: 7px; margin-top: 9px;
+    padding: 3px 0; color: var(--accent); text-decoration: none; font-weight: 600;
+    touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+  .leaflet-popup-content b { display: flex; align-items: center; gap: 6px; }
   .leaflet-popup-close-button { color: var(--muted) !important; }
   .leaflet-control-attribution { background: rgba(26,29,33,.7) !important; color: #888 !important;
     font-size: 9px !important; }
@@ -196,10 +223,7 @@
 <div id="fabs">
   <button class="fab" id="fab-menu" title="Menu">☰</button>
   <button class="fab" id="fab-layers" title="Fond de carte">🗺️</button>
-  <button class="fab" id="fab-draw" title="Tracer un itinéraire">✏️</button>
-  <button class="fab" id="fab-locate" title="Ma position">🧭</button>
-  <button class="fab" id="fab-follow" title="Suivi auto" style="display:none">📍</button>
-  <button class="fab" id="fab-profile" title="Profil altimétrique" style="display:none">⛰️</button>
+  <button class="fab" id="fab-3d" title="Vue 3D">3D</button>
 </div>
 
 <div id="netdot">En ligne</div>
@@ -223,6 +247,13 @@
   <canvas id="profile"></canvas>
 </div>
 
+<div id="fabs-bottom">
+  <button class="fab" id="fab-locate" title="Ma position">🧭</button>
+  <button class="fab" id="fab-follow" title="Suivi auto" style="display:none">📍</button>
+  <button class="fab" id="fab-profile" title="Profil altimétrique" style="display:none">⛰️</button>
+  <button class="fab" id="fab-draw" title="Tracer un itinéraire">✏️</button>
+</div>
+
 <div id="panel">
   <div id="panel-grip"></div>
   <div id="tabs">
@@ -237,19 +268,19 @@
       <button class="btn grow" id="btn-draw">✏️ Tracer</button>
     </div>
     <input type="file" id="gpx-file" accept=".gpx,application/gpx+xml" multiple style="display:none">
-    <small class="hint">Touchez une trace pour l'ouvrir. Boutons de chaque trace&nbsp;: 👁 afficher/masquer, 🔍 zoomer, ✏️ modifier le tracé (déplacer, supprimer, insérer des points), ⤓ exporter en GPX, 🗑 supprimer. Le bouton ✏️ flottant sur la carte permet aussi de tracer directement.</small>
+    <small class="hint">Touchez une trace pour l'ouvrir. Les boutons de chaque trace permettent d'afficher/masquer, zoomer, <b>modifier le tracé</b> (déplacer, supprimer, insérer des points), exporter en GPX et supprimer. Le crayon flottant sur la carte permet aussi de tracer directement, y compris depuis la vue 3D.</small>
     <div id="track-list" style="margin-top:12px"></div>
   </div>
 
   <div class="tab-page" id="page-cartes">
     <h3>Fond de carte</h3>
     <div id="layer-list"></div>
-    <div class="switch-row"><span>⛰️ Relief (estompage du terrain)</span><input type="checkbox" id="opt-shade"></div>
+    <div class="switch-row"><span>Relief (estompage du terrain)</span><input type="checkbox" id="opt-shade"></div>
 
     <h3>Télécharger pour le hors-ligne</h3>
     <small class="hint">Cadrez la zone de votre rando, puis cochez les niveaux de zoom à emporter — chaque ligne affiche son coût pour la zone cadrée, et le zoom actuel est indiqué en bas à gauche de la carte. <b>3 niveaux suffisent</b>&nbsp;: entre deux niveaux téléchargés, la carte affiche automatiquement une version agrandie du niveau du dessous.</small>
     <div class="row preset-row" style="margin-top:10px">
-      <button class="btn" data-preset="rando">⭐ Rando<br>12+14+16</button>
+      <button class="btn" data-preset="rando">Rando<br>12+14+16</button>
       <button class="btn" data-preset="leger">Léger<br>12+15</button>
       <button class="btn" data-preset="complet">Complet<br>12→16</button>
     </div>
@@ -274,9 +305,9 @@
   </div>
 
   <div class="tab-page" id="page-options">
-    <div class="switch-row"><span>🔆 Garder l'écran allumé</span><input type="checkbox" id="opt-wake"></div>
-    <div class="switch-row"><span>📍 Recentrer automatiquement</span><input type="checkbox" id="opt-follow" checked></div>
-    <div class="switch-row"><span>🔄 Mise en cache auto en naviguant</span><input type="checkbox" id="opt-autocache" checked></div>
+    <div class="switch-row"><span>Garder l'écran allumé</span><input type="checkbox" id="opt-wake"></div>
+    <div class="switch-row"><span>Recentrer automatiquement</span><input type="checkbox" id="opt-follow" checked></div>
+    <div class="switch-row"><span>Mise en cache auto en naviguant</span><input type="checkbox" id="opt-autocache" checked></div>
     <h3>Installer l'application</h3>
     <small class="hint">
       <b>iPhone / iPad&nbsp;:</b> dans Safari, touchez Partager <span style="font-size:15px">⎋</span> puis «&nbsp;Sur l'écran d'accueil&nbsp;».<br>
@@ -284,7 +315,7 @@
       Une fois installée et les cartes téléchargées, l'app fonctionne en mode avion.
     </small>
     <h3>À propos</h3>
-    <small class="hint">RandoCarte — 100&nbsp;% gratuit et hors ligne. Cartes&nbsp;: IGN Géoplateforme, OpenTopoMap, Esri. La position GPS fonctionne sans réseau&nbsp;; seule la 1<sup>re</sup> ouverture et le téléchargement des cartes nécessitent une connexion.<span id="app-ver"></span></small>
+    <small class="hint"><b>Randox</b> — explorez plus loin. 100&nbsp;% gratuit et hors ligne. Cartes&nbsp;: IGN Géoplateforme, OpenTopoMap, Esri. La position GPS fonctionne sans réseau&nbsp;; seule la 1<sup>re</sup> ouverture et le téléchargement des cartes nécessitent une connexion.<span id="app-ver"></span></small>
   </div>
 </div>
 

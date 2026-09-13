@@ -1,4 +1,6 @@
-# Mémoire du projet RandoCarte
+# Mémoire du projet Randox (ex-RandoCarte, renommé en v24)
+
+**Marque** : Randox — « Explorez plus loin ». Logo : montagne verte + chemin sinueux + soleil sur carré vert sombre ([icon.svg](icon.svg)). Accent UI `#a3d65c` (texte sombre dessus), fonds vert très sombre. Les noms internes (base IndexedDB `randocarte`, dépôt GitHub) ne changent pas — compatibilité des données.
 
 *Dernière mise à jour : 25 juillet 2026 — version v16*
 
@@ -64,6 +66,15 @@ Web app (PWA) **gratuite et 100 % hors ligne** de randonnée, façon Visorando :
 - **Pente colorée** sur le profil et la trace (vert/jaune/rouge selon le %) — les données sont déjà là.
 - **Stats de session** simples (sans enregistrement complet) : heure de départ, temps écoulé, distance parcourue depuis l'ouverture.
 
+### Inspiration AllTrails pour le futur mode enregistrement (captures fournies par l'utilisateur, sept. 2026)
+- Feuille basse d'enregistrement : grille de stats (Temps, Distance, D+, Restant, Rythme, Vitesse) + gros bouton vert « Commencer ».
+- Choix de l'**activité** (rando, trail, VTT…) qui adapte les calculs de durée.
+- **Partage en direct** de la position avec un proche.
+- **Virage par virage** et **navigation vocale** le long de la trace.
+- **Mise en pause automatique** à l'arrêt.
+- « Maintenir l'écran allumé » comme réglage de session (déjà présent dans Randox, à regrouper ici).
+- Sélecteur de fonds avec **vignettes d'aperçu** (Carte de base / Calques / Extras).
+
 ### Chantier moyen — la bascule native (Capacitor)
 - Transformer la PWA en **app iPhone native** (Capacitor) : tout le code actuel réutilisé.
 - Débloque : **GPS en arrière-plan téléphone verrouillé** → réactiver l'**enregistrement de trace** (retiré en v15, code complet dans l'historique git v13 : stats temps réel, pause, anti-crash, GPX horodaté compatible Strava) avec en plus l'altimètre baromètre du téléphone.
@@ -100,3 +111,5 @@ Web app (PWA) **gratuite et 100 % hors ligne** de randonnée, façon Visorando :
 | v20 | Suppression barre du bas, panneau via ☰ ; app.js réseau d'abord + rechargement auto (fin des décalages interface/code) |
 | v21 | Projection continue de la position sur la trace + panneau Parcouru/Restant (km, D+/D−, temps restant estimé) |
 | v22 | **Relief 2D** (estompage mondial Esri, fondu multiply, inclus dans les téléchargements ≤ z14) + **Vue 3D** (3d.html : MapLibre GL, terrain Terrarium AWS, fond satellite/IGN drapé, trace, survol animé — prototype en ligne) |
+| v23 | Vue 3D : position GPS, profil altimétrique interactif, curseurs synchronisés relief ↔ courbe |
+| v24 | **Rebranding Randox** (logo, accent vert, tagline) ; design AllTrails-like (verre dépoli, deux grappes de boutons, bouton 3D sur la carte, échelle, onglets pilule) ; **icônes SVG** partout (fin des emoji) ; **tracé au doigt dans la vue 3D** (brouillon finalisé par l'app : altitudes + stats) ; qualité 3D (terrain z14, anticrénelage, ombrage) |

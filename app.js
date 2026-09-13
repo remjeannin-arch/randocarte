@@ -1,4 +1,4 @@
-/* RandoCarte — carte de randonnée 100 % hors ligne (GPX + tuiles pré-téléchargées) */
+/* Randox — carte de randonnée 100 % hors ligne (GPX + tuiles pré-téléchargées) */
 "use strict";
 
 /* ================= IndexedDB ================= */
@@ -115,7 +115,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v23";
+const APP_VERSION = "v24";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -145,6 +145,31 @@ const state = {
 };
 const COLORS = ["#ff4d6d", "#4dabf7", "#ffd43b", "#51cf66", "#cc5de8", "#ff922b"];
 const $ = (id) => document.getElementById(id);
+
+/* ================= Icônes SVG (trait, héritent de currentColor) ================= */
+const ICO = {
+  menu: '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>',
+  layers: '<polygon points="12 3 21 8 12 13 3 8"/><polyline points="3 12.5 12 17.5 21 12.5"/><polyline points="3 16.5 12 21.5 21 16.5"/>',
+  nav: '<polygon points="3 11 21 3 13 21 11 13 3 11"/>',
+  cross: '<circle cx="12" cy="12" r="7"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/>',
+  chart: '<path d="M3 4v16h18"/><path d="M6.5 16l4.5-7 3.5 3.5 4.5-6.5"/>',
+  pencil: '<path d="M16.5 3.5a2.6 2.6 0 0 1 4 4L7 21l-5 1 1-5Z"/>',
+  eye: '<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/>',
+  eyeOff: '<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z"/><line x1="4" y1="4" x2="20" y2="20"/>',
+  search: '<circle cx="11" cy="11" r="7"/><line x1="16.2" y1="16.2" x2="21" y2="21"/>',
+  dl: '<path d="M12 3v11"/><polyline points="7 9.5 12 14.5 17 9.5"/><path d="M4 20h16"/>',
+  up: '<path d="M12 21V10"/><polyline points="7 14.5 12 9.5 17 14.5"/><path d="M4 4h16"/>',
+  trash: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M18 7l-.8 13H6.8L6 7"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  pin: '<path d="M12 21.5S5 15.6 5 10.5a7 7 0 0 1 14 0c0 5.1-7 11-7 11Z"/><circle cx="12" cy="10.5" r="2.6"/>',
+  car: '<path d="M4 16.5V12l2-5h12l2 5v4.5"/><path d="M4 12h16"/><circle cx="7.5" cy="16.5" r="1.6"/><circle cx="16.5" cy="16.5" r="1.6"/>',
+  mtn: '<path d="M3 19h18"/><path d="M4 19l6-11 4 7 2.5-4L21 19"/>',
+  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/>',
+  save: '<path d="M5 3h11l3 3v15H5Z"/><path d="M8 3v5h7V3"/><circle cx="12" cy="14.5" r="2.5"/>',
+};
+const ico = (n, s = 18) =>
+  `<svg class="ico" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[n]}</svg>`;
+
 const toast = (msg, ms = 2600) => {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), ms);
@@ -182,6 +207,7 @@ function setLayer(id) {
   updateEstimate();
 }
 setLayer(state.layerId);
+L.control.scale({ imperial: false, maxWidth: 110 }).addTo(map);
 
 /* superposition « relief » : estompage mondial fondu sur le fond (multiply) ;
    au-delà du zoom 14, Leaflet agrandit les tuiles z14 (maxNativeZoom) */
@@ -377,12 +403,12 @@ function drawTrack(t) {
     L.marker([s[0], s[1]], {
       icon: L.divIcon({ className: "start-icon", iconSize: [22, 22], iconAnchor: [11, 11] }),
       zIndexOffset: 500,
-    }).bindPopup(`<b>🚩 Départ — ${escapeXml(t.name)}</b>` + coordLinks(s[0], s[1])).addTo(g);
+    }).bindPopup(`<b>Départ — ${escapeXml(t.name)}</b>` + coordLinks(s[0], s[1])).addTo(g);
     const e = t.pts[t.pts.length - 1];
     L.circleMarker([e[0], e[1]], { radius: 7, color: "#fff", weight: 2, fillColor: "#ff6b6b", fillOpacity: 1 }).addTo(g);
   }
   (t.wpts || []).forEach(w => {
-    L.marker([w.lat, w.lon], { icon: L.divIcon({ className: "wpt-icon", html: "📌", iconSize: [20, 20] }) })
+    L.marker([w.lat, w.lon], { icon: L.divIcon({ className: "wpt-icon", html: ico("pin", 20), iconSize: [20, 20], iconAnchor: [10, 19] }) })
       .bindPopup(w.name || "Point").addTo(g);
   });
   g.addTo(map);
@@ -400,11 +426,11 @@ function renderTrackList() {
       <div class="track-head">
         <div class="track-dot" style="background:${t.color}"></div>
         <div class="track-name">${t.name}</div>
-        <button data-a="eye" title="Afficher/masquer">${t.visible ? "👁" : "🚫"}</button>
-        <button data-a="zoom" title="Zoomer">🔍</button>
-        <button data-a="edit" title="Modifier le tracé">✏️</button>
-        <button data-a="exp" title="Exporter en GPX">⤓</button>
-        <button data-a="del" title="Supprimer">🗑</button>
+        <button data-a="eye" title="Afficher/masquer">${ico(t.visible ? "eye" : "eyeOff", 17)}</button>
+        <button data-a="zoom" title="Zoomer">${ico("search", 17)}</button>
+        <button data-a="edit" title="Modifier le tracé">${ico("pencil", 17)}</button>
+        <button data-a="exp" title="Exporter en GPX">${ico("dl", 17)}</button>
+        <button data-a="del" title="Supprimer">${ico("trash", 17)}</button>
       </div>
       <div class="track-stats">${fmtDist(t.dist)}${t.pts.some(p => p[2] != null)
         ? ` · D+ ${t.dplus} m · D− ${t.dminus} m`
@@ -419,16 +445,17 @@ function renderTrackList() {
         <div>↘ Dénivelé négatif<b>${t.dminus ? "− " + t.dminus + " m" : "–"}</b></div>
         <div>▲ Point haut<b>${t.hi != null ? t.hi.toLocaleString("fr-FR") + " m" : "–"}</b></div>
         <div>▼ Point bas<b>${t.lo != null ? t.lo.toLocaleString("fr-FR") + " m" : "–"}</b></div>
-        <div class="fiche-nav">📍 Départ&nbsp;:
-          <a href="#" onclick="rcCopy('${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}');return false;">${t.pts[0][0].toFixed(5)}, ${t.pts[0][1].toFixed(5)} 📋</a></div>
-        <div class="fiche-nav">⛰️ <a href="3d.html#${t.id}">Vue 3D du parcours</a>
+        <div class="fiche-nav">${ico("pin", 13)} Départ&nbsp;:
+          <a href="#" onclick="rcCopy('${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}');return false;">${t.pts[0][0].toFixed(5)}, ${t.pts[0][1].toFixed(5)} ${ico("copy", 12)}</a></div>
+        <div class="fiche-nav">${ico("mtn", 13)} <a href="3d.html#${t.id}">Vue 3D du parcours</a>
           <span style="color:var(--muted)">(connexion nécessaire)</span></div>
-        <div class="fiche-nav">🚗 Itinéraire voiture vers le départ&nbsp;:
+        <div class="fiche-nav">${ico("car", 13)} Itinéraire voiture vers le départ&nbsp;:
           <a href="${appleMapsUrl(`${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}`)}" rel="noopener">Plans</a> ·
           <a href="${googleMapsUrl(`${t.pts[0][0].toFixed(6)},${t.pts[0][1].toFixed(6)}`)}" rel="noopener">Google&nbsp;Maps</a></div>
       </div>` : ""}`;
     div.querySelector(".track-head").addEventListener("click", (e) => {
-      const a = e.target.getAttribute && e.target.getAttribute("data-a");
+      const btn = e.target.closest ? e.target.closest("[data-a]") : null;
+      const a = btn && btn.getAttribute("data-a");
       if (a === "eye") { t.visible = !t.visible; saveTrack(t); drawTrack(t); renderTrackList(); }
       else if (a === "zoom") { zoomToTrack(t); }
       else if (a === "exp") { exportGPX(t); }
@@ -529,7 +556,7 @@ function exportGPX(t) {
   const seg = t.pts.map((p, i) =>
     `<trkpt lat="${p[0].toFixed(6)}" lon="${p[1].toFixed(6)}">${p[2] != null ? `<ele>${Math.round(p[2] * 10) / 10}</ele>` : ""}${t.times && t.times[i] ? `<time>${t.times[i]}</time>` : ""}</trkpt>`
   ).join("\n");
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="RandoCarte" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>${escapeXml(t.name)}</name><trkseg>\n${seg}\n</trkseg></trk>\n</gpx>`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Randox" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>${escapeXml(t.name)}</name><trkseg>\n${seg}\n</trkseg></trk>\n</gpx>`;
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([xml], { type: "application/gpx+xml" }));
   a.download = (t.name.replace(/[\\/:*?"<>|]/g, "").trim() || "trace") + ".gpx";
@@ -704,10 +731,10 @@ const googleMapsUrl = (q) => `https://www.google.com/maps/dir/?api=1&destination
 function coordLinks(lat, lon) {
   const q = `${lat.toFixed(6)},${lon.toFixed(6)}`;
   /* pas de target="_blank" : échoue en silence dans les PWA iOS */
-  return `<b>📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}</b>` +
-    `<a href="#" onclick="rcCopy('${q}');return false;">📋 Copier les coordonnées</a>` +
-    `<a href="${appleMapsUrl(q)}" rel="noopener">🚗 Itinéraire avec Plans</a>` +
-    `<a href="${googleMapsUrl(q)}" rel="noopener">🚗 Itinéraire avec Google Maps</a>`;
+  return `<b>${ico("pin", 14)} ${lat.toFixed(5)}, ${lon.toFixed(5)}</b>` +
+    `<a href="#" onclick="rcCopy('${q}');return false;">${ico("copy", 15)} Copier les coordonnées</a>` +
+    `<a href="${appleMapsUrl(q)}" rel="noopener">${ico("car", 15)} Itinéraire avec Plans</a>` +
+    `<a href="${googleMapsUrl(q)}" rel="noopener">${ico("car", 15)} Itinéraire avec Google Maps</a>`;
 }
 let lastCoordPopup = 0;
 function openCoordPopup(ll) {
@@ -776,11 +803,9 @@ async function fetchElevations(pts) {
   }
   return out;
 }
-$("draw-done").addEventListener("click", async () => {
-  if (drawState.pts.length < 2) { toast("Posez au moins 2 points sur la carte"); return; }
-  const name = prompt("Nom du tracé :", "Mon itinéraire") || "Mon itinéraire";
-  const dense = densify(drawState.pts);
-  endDraw();
+/* finalise un tracé dessiné (2D ou vue 3D) : densification, altitudes IGN, stats */
+async function finishDraw(rawPts, name) {
+  const dense = densify(rawPts);
   let eles = null;
   if (navigator.onLine) {
     toast("Récupération des altitudes IGN…", 6000);
@@ -795,7 +820,22 @@ $("draw-done").addEventListener("click", async () => {
   drawTrack(t);
   setActiveTrack(t.id);
   toast(`Tracé « ${t.name} » créé ✔ ${fmtDist(t.dist)}${t.dplus ? " · D+ " + t.dplus + " m" : ""}`, 4000);
+}
+$("draw-done").addEventListener("click", async () => {
+  if (drawState.pts.length < 2) { toast("Posez au moins 2 points sur la carte"); return; }
+  const name = prompt("Nom du tracé :", "Mon itinéraire") || "Mon itinéraire";
+  const raw = drawState.pts.slice();
+  endDraw();
+  await finishDraw(raw, name);
 });
+/* brouillon déposé par la vue 3D (localStorage) → finalisé après le chargement des traces */
+async function processDraft3d() {
+  let draft = null;
+  try { draft = JSON.parse(localStorage.getItem("rc.draft") || "null"); } catch (e) {}
+  localStorage.removeItem("rc.draft");
+  if (draft && Array.isArray(draft.pts) && draft.pts.length > 1)
+    await finishDraw(draft.pts, draft.name || "Tracé 3D");
+}
 
 /* ================= Profil altimétrique ================= */
 const PROF = { L: 38, R: 10, T: 8, B: 18 }; // marges en px CSS
@@ -1027,9 +1067,9 @@ function updateNavHUD() {
     const dmRest = hasD ? Math.max(0, t.dminus - dmDone) : 0;
     const restMs = (rest / 4000 + dpRest / 300 + dmRest / 500) * 3600000;
     show("hud-nav", true);
-    $("nav-done").innerHTML = `▶ Parcouru <b>${fmtDist(done)}</b>` +
+    $("nav-done").innerHTML = `<span class="nav-lbl">Parcouru</span> <b>${fmtDist(done)}</b>` +
       (hasD ? ` · D+ <b>${dpDone}</b> · D− <b>${dmDone} m</b>` : "");
-    $("nav-rest").innerHTML = `⏳ Restant <b>${fmtDist(rest)}</b>` +
+    $("nav-rest").innerHTML = `<span class="nav-lbl">Restant</span> <b>${fmtDist(rest)}</b>` +
       (hasD ? ` · D+ <b>${dpRest}</b> · D− <b>${dmRest} m</b>` : "") +
       ` · ≈ <b>${fmtDur(restMs)}</b>`;
 
@@ -1294,7 +1334,7 @@ async function exportBackup() {
   const blob = new Blob([head, metaBytes, ...parts], { type: "application/octet-stream" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `randocarte-${new Date().toISOString().slice(0, 10)}.rcz`;
+  a.download = `randox-${new Date().toISOString().slice(0, 10)}.rcz`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
   toast(`Sauvegarde créée : ${(blob.size / 1048576).toFixed(0)} Mo (${tiles.length.toLocaleString("fr-FR")} tuiles, ${tracks.length} trace(s)) — cherchez-la dans Fichiers/Téléchargements`, 8000);
@@ -1302,7 +1342,7 @@ async function exportBackup() {
 async function importBackup(file) {
   try {
     const dv = new DataView(await file.slice(0, 8).arrayBuffer());
-    if (dv.getUint32(0) !== RCZ_MAGIC) { toast("Ce fichier n'est pas une sauvegarde RandoCarte (.rcz)"); return; }
+    if (dv.getUint32(0) !== RCZ_MAGIC) { toast("Ce fichier n'est pas une sauvegarde Randox (.rcz)"); return; }
     const metaLen = dv.getUint32(4);
     const meta = JSON.parse(new TextDecoder().decode(await file.slice(8, 8 + metaLen).arrayBuffer()));
     const base = 8 + metaLen;
@@ -1379,7 +1419,7 @@ function buildQuickLayers() {
     el.appendChild(b);
   }
   const sh = document.createElement("button");
-  sh.textContent = (state.shade ? "✓ " : "") + "⛰️ Relief (estompage)";
+  sh.innerHTML = (state.shade ? "✓ " : "") + ico("mtn", 15) + " Relief (estompage)";
   sh.style.borderTop = "1px solid #3a4048";
   sh.addEventListener("click", () => {
     setShade(!state.shade);
@@ -1391,6 +1431,10 @@ function buildQuickLayers() {
 $("fab-layers").addEventListener("click", () => {
   buildQuickLayers();
   $("layer-quick").classList.toggle("open");
+});
+/* raccourci vue 3D : ouvre le parcours actif (ou la zone affichée) en relief */
+$("fab-3d").addEventListener("click", () => {
+  location.href = "3d.html" + (state.activeTrackId ? "#" + state.activeTrackId : "");
 });
 const openPanel = () => {
   panel.classList.add("open");
@@ -1477,12 +1521,29 @@ if ("serviceWorker" in navigator) {
 }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
+/* icônes SVG des boutons statiques */
+const setIco = (id, name, s, label) => {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = ico(name, s) + (label ? " " + label : "");
+};
+setIco("fab-menu", "menu", 21);
+setIco("fab-layers", "layers", 21);
+setIco("fab-draw", "pencil", 20);
+setIco("fab-locate", "nav", 20);
+setIco("fab-follow", "cross", 20);
+setIco("fab-profile", "chart", 20);
+setIco("btn-import", "plus", 16, "Importer GPX");
+setIco("btn-draw", "pencil", 15, "Tracer");
+setIco("btn-backup", "save", 16, "Exporter la sauvegarde");
+setIco("btn-restore", "up", 16, "Importer");
+setIco("btn-download", "dl", 16, "Télécharger la zone affichée");
+
 const verEl = document.getElementById("app-ver");
 if (verEl) verEl.textContent = " Version " + APP_VERSION + ".";
 if (SAFE_VIEW && !SAFE_TRACKS) toast("Redémarrage après incident : vue réinitialisée", 5000);
 
 buildZoomRows();
-loadTracks();
+loadTracks().then(processDraft3d);
 updateEstimate();
 refreshStorage();
 
