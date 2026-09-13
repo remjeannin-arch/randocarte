@@ -556,12 +556,28 @@ let fondIdx = 0;
     nodes.forEach(n => memPois.set(n.id, n));
     savePoisDB(nodes);
   }
-  async function refreshPeaks3() {
+  /* petit message transitoire (diagnostic + retour utilisateur) */
+  let noteEl = null, noteT = null;
+  function note3(msg, ms = 3500) {
+    if (!noteEl) {
+      noteEl = document.createElement("div");
+      noteEl.style.cssText = "position:absolute;left:50%;transform:translateX(-50%);bottom:150px;" +
+        "z-index:30;background:rgba(15,18,12,.92);color:#fff;padding:8px 14px;border-radius:10px;" +
+        "font-size:13px;max-width:84vw;text-align:center;pointer-events:none";
+      document.body.appendChild(noteEl);
+    }
+    noteEl.textContent = msg;
+    noteEl.style.display = "block";
+    clearTimeout(noteT);
+    noteT = setTimeout(() => { noteEl.style.display = "none"; }, ms);
+  }
+  async function refreshPeaks3(verbose) {
     if (!peaksOn) { peakMarkers.forEach(m => m.remove()); peakMarkers = []; return; }
     const b = peaksBox();
     const key = [b.s, b.w, b.n, b.e].map(v => v.toFixed(2)).join(",");
+    let fetchErr = null;
     if (navigator.onLine && key !== lastPeakBox) {
-      try { await fetchPeaks3(b); lastPeakBox = key; } catch (e) {}
+      try { await fetchPeaks3(b); lastPeakBox = key; } catch (e) { fetchErr = e; }
     }
     (await loadPoisDB()).forEach(p => { if (!memPois.has(p.id)) memPois.set(p.id, p); });
     const inBox = [...memPois.values()].filter(p =>
@@ -577,6 +593,10 @@ let fondIdx = 0;
       peakMarkers.push(new maplibregl.Marker({ element: el, anchor: "bottom", offset: [0, -3] })
         .setLngLat([p.lon, p.lat]).addTo(map));
     }
+    if (verbose) {
+      if (fetchErr && !inBox.length) note3("Sommets : service OSM injoignable (" + (fetchErr.message || fetchErr) + ")");
+      else note3(`Sommets affichés : ${peakMarkers.length} (${memPois.size} connus dans la zone élargie)`);
+    }
   }
   map.on("moveend", () => {
     if (!peaksOn) return;
@@ -586,7 +606,7 @@ let fondIdx = 0;
   $("btn-peaks3").addEventListener("click", () => {
     peaksOn = !peaksOn;
     $("btn-peaks3").classList.toggle("on", peaksOn);
-    refreshPeaks3();
+    refreshPeaks3(true);
   });
   if (peaksOn) {
     $("btn-peaks3").classList.add("on");

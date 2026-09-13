@@ -44,6 +44,14 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const R = 6371000, D2R = Math.PI / 180;
+/* toute erreur s'affiche en clair (diagnostic) */
+const showErr = (m) => {
+  const l = $("load");
+  l.style.display = "block";
+  l.innerHTML = "⚠️ Erreur panorama :<br><b>" + String(m).slice(0, 300) + "</b><br><br><a href='./'>‹ Retour à la carte</a>";
+};
+window.addEventListener("error", (e) => showErr(e.message + " (l." + e.lineno + ")"));
+window.addEventListener("unhandledrejection", (e) => showErr((e.reason && e.reason.message) || e.reason));
 
 /* ---- point d'observation : hash "lat,lon", sinon dernière vue de la carte ---- */
 let lat0, lon0;
@@ -238,7 +246,7 @@ async function build() {
   }
   load.style.display = "none";
   ready = true;
-  draw();
+  try { draw(); } catch (e) { showErr("rendu : " + e.message); }
 }
 
 /* ---- rendu ---- */
@@ -380,7 +388,7 @@ $("btn-gps").addEventListener("click", () => {
   { enableHighAccuracy: true, timeout: 15000 });
 });
 
-build();
+build().catch((e) => showErr(e && e.message ? e.message : e));
 </script>
 </body>
 </html>

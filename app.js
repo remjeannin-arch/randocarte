@@ -116,7 +116,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v28";
+const APP_VERSION = "v29";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -264,10 +264,14 @@ async function fetchPeaks(b) {
   if (nodes.length) await idb("pois", "readwrite", s => { for (const n of nodes) s.put(n, n.id); });
   lastPeakBox = key;
 }
-async function refreshPeaks() {
+async function refreshPeaks(verbose) {
   if (!state.peaks) return;
   if (!peakLayer) peakLayer = L.layerGroup().addTo(map);
-  if (map.getZoom() < 11) { peakLayer.clearLayers(); return; }
+  if (map.getZoom() < 11) {
+    peakLayer.clearLayers();
+    if (verbose) toast("Sommets : zoomez davantage (à partir du zoom 11) — zoom actuel " + map.getZoom());
+    return;
+  }
   const b = map.getBounds().pad(0.15);
   let fetchFailed = false;
   if (navigator.onLine) {
@@ -278,6 +282,8 @@ async function refreshPeaks() {
     p.lat > b.getSouth() && p.lat < b.getNorth() && p.lon > b.getWest() && p.lon < b.getEast());
   if (fetchFailed && !inBox.length)
     toast("Sommets momentanément indisponibles (service OSM surchargé) — réessayez dans une minute");
+  else if (verbose)
+    toast(`Sommets : ${inBox.length} trouvés dans la vue`);
   inBox.sort((a, b2) => (b2.ele || 0) - (a.ele || 0));
   const z = map.getZoom();
   const max = z >= 14 ? 120 : z >= 12 ? 60 : 30;
@@ -298,7 +304,7 @@ function setPeaks(on) {
   if (cb) cb.checked = on;
   if (!on) { if (peakLayer) peakLayer.clearLayers(); }
   else {
-    refreshPeaks();
+    refreshPeaks(true);
     if (!navigator.onLine) toast("Hors ligne : seuls les sommets déjà en cache s'affichent");
   }
 }
