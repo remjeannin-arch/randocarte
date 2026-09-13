@@ -116,7 +116,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v30";
+const APP_VERSION = "v31";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -234,7 +234,7 @@ if (state.shade) setShade(true);
 $("opt-shade").addEventListener("change", (e) => setShade(e.target.checked));
 
 /* ================= Sommets et cols (OpenStreetMap, cache hors ligne) ================= */
-let peakLayer = null, peakTimer = null, lastPeakBox = null;
+let peakLayer = null, peakTimer = null;
 /* interroge Overpass avec bascule automatique entre miroirs (limites de débit) */
 async function overpassQuery(q) {
   for (const host of ["https://overpass-api.de", "https://overpass.kumi.systems", "https://overpass.osm.ch"]) {
@@ -249,41 +249,61 @@ async function overpassQuery(q) {
   }
   throw new Error("service OSM indisponible");
 }
+const memPois = new Map();
+const peaksBox2 = (dLat) => {
+  const c = map.getCenter();
+  const dLon = Math.min(1.2, dLat / Math.max(0.2, Math.cos(c.lat * Math.PI / 180)));
+  return { s: c.lat - dLat, n: c.lat + dLat, w: c.lng - dLon, e: c.lng + dLon };
+};
 async function fetchPeaks(b) {
-  const key = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(v => v.toFixed(2)).join(",");
-  if (lastPeakBox === key) return;
-  const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
-  const q = `[out:json][timeout:25];(node["natural"="peak"]["name"](${bbox});` +
-    `node["natural"="saddle"]["name"](${bbox});node["mountain_pass"="yes"]["name"](${bbox}););out body 250;`;
+  const bbox = `${b.s},${b.w},${b.n},${b.e}`;
+  const q = `[out:json][timeout:30];(node["natural"="peak"]["name"](${bbox});` +
+    `node["natural"="saddle"]["name"](${bbox});node["mountain_pass"="yes"]["name"](${bbox}););out body 600;`;
   const j = await overpassQuery(q);
   const nodes = (j.elements || []).filter(e => e.tags && e.tags.name).map(e => ({
     id: e.id, lat: e.lat, lon: e.lon, name: e.tags.name,
     ele: parseFloat(e.tags.ele) || null,
     type: e.tags.natural === "peak" ? "peak" : "col",
   }));
+  nodes.forEach(n => memPois.set(n.id, n));
   if (nodes.length) await idb("pois", "readwrite", s => { for (const n of nodes) s.put(n, n.id); });
-  lastPeakBox = key;
 }
-async function refreshPeaks(verbose) {
+/* une seule grosse récupération (~150 km) ; refaite seulement si on sort de la zone couverte */
+let fetchedBox = null, peaksFetching = false, poisDbLoaded = false;
+async function ensurePeaksData(verbose) {
+  if (!poisDbLoaded) {
+    poisDbLoaded = true;
+    const all = (await idb("pois", "readonly", s => s.getAll()).catch(() => [])) || [];
+    all.forEach(p => { if (!memPois.has(p.id)) memPois.set(p.id, p); });
+    renderPeaks();
+  }
+  if (!navigator.onLine || peaksFetching) return;
+  const c = map.getCenter();
+  if (fetchedBox && c.lat > fetchedBox.s + 0.2 && c.lat < fetchedBox.n - 0.2 &&
+      c.lng > fetchedBox.w + 0.25 && c.lng < fetchedBox.e - 0.25) return;
+  peaksFetching = true;
+  try {
+    const big = peaksBox2(0.7);
+    await fetchPeaks(big);
+    fetchedBox = big;
+    renderPeaks(verbose);
+  } catch (e) {
+    if (verbose && !memPois.size)
+      toast("Sommets momentanément indisponibles (service OSM surchargé) — réessayez dans une minute");
+  } finally { peaksFetching = false; }
+}
+/* affichage instantané depuis la mémoire */
+function renderPeaks(verbose) {
   if (!state.peaks) return;
   if (!peakLayer) peakLayer = L.layerGroup().addTo(map);
   if (map.getZoom() < 11) {
     peakLayer.clearLayers();
-    if (verbose) toast("Sommets : zoomez davantage (à partir du zoom 11) — zoom actuel " + map.getZoom());
+    if (verbose) toast("Sommets : zoomez davantage (visibles à partir du zoom 11)");
     return;
   }
   const b = map.getBounds().pad(0.15);
-  let fetchFailed = false;
-  if (navigator.onLine) {
-    try { await fetchPeaks(b); } catch (e) { fetchFailed = true; }
-  }
-  const all = (await idb("pois", "readonly", s => s.getAll()).catch(() => [])) || [];
-  const inBox = all.filter(p =>
+  const inBox = [...memPois.values()].filter(p =>
     p.lat > b.getSouth() && p.lat < b.getNorth() && p.lon > b.getWest() && p.lon < b.getEast());
-  if (fetchFailed && !inBox.length)
-    toast("Sommets momentanément indisponibles (service OSM surchargé) — réessayez dans une minute");
-  else if (verbose)
-    toast(`Sommets : ${inBox.length} trouvés dans la vue`);
   inBox.sort((a, b2) => (b2.ele || 0) - (a.ele || 0));
   const z = map.getZoom();
   const max = z >= 14 ? 120 : z >= 12 ? 60 : 30;
@@ -296,6 +316,7 @@ async function refreshPeaks(verbose) {
         html: `<div class="poi-inner"><span>${p.type === "peak" ? "▲" : ")("}</span> ${escapeXml(p.name)}${alt}</div>` }),
     }).addTo(peakLayer);
   }
+  if (verbose) toast(`Sommets : ${peakLayer.getLayers().length} affichés (${memPois.size} connus dans la zone)`);
 }
 function setPeaks(on) {
   state.peaks = on;
@@ -304,14 +325,15 @@ function setPeaks(on) {
   if (cb) cb.checked = on;
   if (!on) { if (peakLayer) peakLayer.clearLayers(); }
   else {
-    refreshPeaks(true);
+    renderPeaks();
+    ensurePeaksData(true);
     if (!navigator.onLine) toast("Hors ligne : seuls les sommets déjà en cache s'affichent");
   }
 }
 map.on("moveend", () => {
   if (!state.peaks) return;
   clearTimeout(peakTimer);
-  peakTimer = setTimeout(refreshPeaks, 600);
+  peakTimer = setTimeout(() => { renderPeaks(); ensurePeaksData(); }, 250);
 });
 $("opt-peaks").addEventListener("change", (e) => setPeaks(e.target.checked));
 
@@ -1427,7 +1449,7 @@ async function downloadArea() {
   if (!ctrl.signal.aborted) {
     toast("Zone téléchargée — utilisable sans réseau ✔");
     /* les noms de sommets de la zone partent aussi dans le cache */
-    if (state.peaks) { try { await fetchPeaks(map.getBounds().pad(0.15)); } catch (e) {} }
+    if (state.peaks) { try { await fetchPeaks(peaksBox2(0.7)); } catch (e) {} }
   }
   refreshStorage();
 }

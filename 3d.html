@@ -525,12 +525,12 @@ let fondIdx = 0;
   };
   /* emprise stable autour du centre caméra : map.getBounds() devient démesurée/invalide
      quand l'horizon est visible à forte inclinaison (étiquettes qui disparaissaient) */
-  function peaksBox() {
+  function peaksBox(dLat) {
     const c = map.getCenter();
-    const dLat = 0.28;
-    const dLon = Math.min(0.6, 0.28 / Math.max(0.2, Math.cos(c.lat * Math.PI / 180)));
+    const dLon = Math.min(1.2, dLat / Math.max(0.2, Math.cos(c.lat * Math.PI / 180)));
     return { s: c.lat - dLat, n: c.lat + dLat, w: c.lng - dLon, e: c.lng + dLon };
   }
+  const inBoxP = (p, b) => p.lat > b.s && p.lat < b.n && p.lon > b.w && p.lon < b.e;
   async function overpassQ3(q) {
     for (const host of ["https://overpass-api.de", "https://overpass.kumi.systems", "https://overpass.osm.ch"]) {
       try {
@@ -546,7 +546,7 @@ let fondIdx = 0;
   async function fetchPeaks3(b) {
     const bbox = `${b.s},${b.w},${b.n},${b.e}`;
     const q = `[out:json][timeout:25];(node["natural"="peak"]["name"](${bbox});` +
-      `node["natural"="saddle"]["name"](${bbox});node["mountain_pass"="yes"]["name"](${bbox}););out body 250;`;
+      `node["natural"="saddle"]["name"](${bbox});node["mountain_pass"="yes"]["name"](${bbox}););out body 600;`;
     const j = await overpassQ3(q);
     const nodes = (j.elements || []).filter(e => e.tags && e.tags.name).map(e => ({
       id: e.id, lat: e.lat, lon: e.lon, name: e.tags.name,
@@ -571,21 +571,38 @@ let fondIdx = 0;
     clearTimeout(noteT);
     noteT = setTimeout(() => { noteEl.style.display = "none"; }, ms);
   }
-  async function refreshPeaks3(verbose) {
-    if (!peaksOn) { peakMarkers.forEach(m => m.remove()); peakMarkers = []; return; }
-    const b = peaksBox();
-    const key = [b.s, b.w, b.n, b.e].map(v => v.toFixed(2)).join(",");
-    let fetchErr = null;
-    if (navigator.onLine && key !== lastPeakBox) {
-      try { await fetchPeaks3(b); lastPeakBox = key; } catch (e) { fetchErr = e; }
+  /* une seule grosse récupération (~150 km autour de la zone) au chargement ;
+     re-déclenchée uniquement si la caméra sort de la zone couverte.
+     L'affichage, lui, est instantané depuis la mémoire. */
+  let fetchedBox = null, fetching = false, dbLoaded = false;
+  async function ensurePeaksData(verbose) {
+    if (!dbLoaded) {
+      dbLoaded = true;
+      (await loadPoisDB()).forEach(p => { if (!memPois.has(p.id)) memPois.set(p.id, p); });
+      renderPeaks3();
     }
-    (await loadPoisDB()).forEach(p => { if (!memPois.has(p.id)) memPois.set(p.id, p); });
-    const inBox = [...memPois.values()].filter(p =>
-      p.lat > b.s && p.lat < b.n && p.lon > b.w && p.lon < b.e);
-    peakMarkers.forEach(m => m.remove());
-    peakMarkers = [];
+    if (!navigator.onLine || fetching) return;
+    const c = map.getCenter();
+    if (fetchedBox && c.lat > fetchedBox.s + 0.2 && c.lat < fetchedBox.n - 0.2 &&
+        c.lng > fetchedBox.w + 0.25 && c.lng < fetchedBox.e - 0.25) return;
+    fetching = true;
+    try {
+      const big = peaksBox(0.7);
+      await fetchPeaks3(big);
+      fetchedBox = big;
+      renderPeaks3(verbose);
+    } catch (e) {
+      if (verbose && !memPois.size) note3("Sommets : service OSM injoignable (" + (e.message || e) + ")");
+    } finally { fetching = false; }
+  }
+  function renderPeaks3(verbose) {
+    if (!peaksOn) { peakMarkers.forEach(m => m.remove()); peakMarkers = []; return; }
+    const b = peaksBox(0.3);
+    const inBox = [...memPois.values()].filter(p => inBoxP(p, b));
     inBox.sort((a, c) => (c.ele || 0) - (a.ele || 0));
     const max = map.getZoom() >= 13 ? 70 : 40;
+    peakMarkers.forEach(m => m.remove());
+    peakMarkers = [];
     for (const p of inBox.slice(0, max)) {
       const el = document.createElement("div");
       el.className = "poi3" + (p.type === "col" ? " col" : "");
@@ -593,25 +610,22 @@ let fondIdx = 0;
       peakMarkers.push(new maplibregl.Marker({ element: el, anchor: "bottom", offset: [0, -3] })
         .setLngLat([p.lon, p.lat]).addTo(map));
     }
-    if (verbose) {
-      if (fetchErr && !inBox.length) note3("Sommets : service OSM injoignable (" + (fetchErr.message || fetchErr) + ")");
-      else note3(`Sommets affichés : ${peakMarkers.length} (${memPois.size} connus dans la zone élargie)`);
-    }
+    if (verbose) note3(`Sommets affichés : ${peakMarkers.length} (${memPois.size} connus dans la zone)`);
   }
   map.on("moveend", () => {
     if (!peaksOn) return;
     clearTimeout(peakTimer);
-    peakTimer = setTimeout(refreshPeaks3, 700);
+    peakTimer = setTimeout(() => { renderPeaks3(); ensurePeaksData(); }, 250);
   });
   $("btn-peaks3").addEventListener("click", () => {
     peaksOn = !peaksOn;
     $("btn-peaks3").classList.toggle("on", peaksOn);
-    refreshPeaks3(true);
+    localStorage.setItem("rc.peaks", peaksOn ? "1" : "0");
+    renderPeaks3(peaksOn);
+    if (peaksOn) ensurePeaksData(true);
   });
-  if (peaksOn) {
-    $("btn-peaks3").classList.add("on");
-    map.on("load", () => setTimeout(() => refreshPeaks3(true), 900));
-  }
+  if (peaksOn) $("btn-peaks3").classList.add("on");
+  map.on("load", () => setTimeout(() => { if (peaksOn) ensurePeaksData(true); }, 600));
 })();
 </script>
 </body>
