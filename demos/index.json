@@ -1,0 +1,47 @@
+[
+ {
+  "file": "cirque-de-gavarnie.gpx",
+  "name": "Cirque de Gavarnie",
+  "region": "Pyrénées (65)",
+  "desc": "Depuis le village de Gavarnie, l'approche du grand cirque glaciaire classé UNESCO et de sa Grande Cascade (422 m). Un itinéraire grandiose de bout en bout. Aller simple : le retour se fait par le même chemin.",
+  "dist": 7651,
+  "dplus": 407,
+  "dminus": 368,
+  "hi": 1761,
+  "lo": 1373,
+  "loop": false,
+  "difficulty": "Moyenne",
+  "duration": "4h",
+  "source": "Données © contributeurs OpenStreetMap (ODbL), relation 5305690 · altitudes IGN"
+ },
+ {
+  "file": "trou-de-la-bombe.gpx",
+  "name": "Col de Bavella — Trou de la Bombe",
+  "region": "Corse-du-Sud (2A)",
+  "desc": "Au départ du col de Bavella, sous les aiguilles, à travers les pins lariciu jusqu'au Trou de la Bombe (u Cumpuleddu), spectaculaire arche de 8 m creusée dans la paroi.",
+  "dist": 5588,
+  "dplus": 181,
+  "dminus": 179,
+  "hi": 1314,
+  "lo": 1212,
+  "loop": true,
+  "difficulty": "Facile",
+  "duration": "2h20",
+  "source": "Données © contributeurs OpenStreetMap (ODbL), relation 11563469 · altitudes IGN"
+ },
+ {
+  "file": "puy-de-dome.gpx",
+  "name": "Le Puy de Dôme",
+  "region": "Auvergne (63)",
+  "desc": "L'ascension du géant de la Chaîne des Puys (UNESCO), avec un panorama à 360° sur les volcans d'Auvergne au sommet.",
+  "dist": 7153,
+  "dplus": 352,
+  "dminus": 354,
+  "hi": 1415,
+  "lo": 1056,
+  "loop": true,
+  "difficulty": "Moyenne",
+  "duration": "3h40",
+  "source": "Données © contributeurs OpenStreetMap (ODbL), relation 11340787 · altitudes IGN"
+ }
+]

@@ -115,7 +115,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v24";
+const APP_VERSION = "v25";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -828,6 +828,50 @@ $("draw-done").addEventListener("click", async () => {
   endDraw();
   await finishDraw(raw, name);
 });
+/* ================= Randos de démonstration ================= */
+async function loadDemos() {
+  const el = $("demo-list");
+  try {
+    const r = await fetch("demos/index.json");
+    if (!r.ok) throw 0;
+    const demos = await r.json();
+    el.innerHTML = "";
+    for (const d of demos) {
+      const added = state.tracks.some(t => t.name === d.name);
+      const div = document.createElement("div");
+      div.className = "demo";
+      div.innerHTML = `
+        <div class="demo-head"><b>${d.name}</b><span>${d.region}</span></div>
+        <div class="demo-stats">${fmtDist(d.dist)} · D+ ${d.dplus} m · ${d.difficulty} · ≈ ${d.duration} · ${d.loop ? "boucle" : "aller simple"}</div>
+        <div class="demo-desc">${d.desc}</div>
+        <button class="btn ${added ? "" : "primary"}" ${added ? "disabled" : ""}>${added ? "Déjà ajoutée ✓" : "Ajouter cette rando"}</button>`;
+      div.querySelector("button").addEventListener("click", async (ev) => {
+        ev.target.disabled = true;
+        try {
+          const g = await fetch("demos/" + d.file);
+          if (!g.ok) throw 0;
+          const t = parseGPX(await g.text(), d.name);
+          t.color = COLORS[state.tracks.length % COLORS.length];
+          state.tracks.push(t);
+          await saveTrack(t);
+          drawTrack(t);
+          setActiveTrack(t.id);
+          zoomToTrack(t);
+          toast(`« ${t.name} » ajoutée ✔ Elle est maintenant disponible hors ligne.`, 4000);
+          renderTrackList();
+          loadDemos();
+        } catch (err) {
+          ev.target.disabled = false;
+          toast("Ajout impossible — vérifiez la connexion");
+        }
+      });
+      el.appendChild(div);
+    }
+  } catch (err) {
+    el.innerHTML = '<small class="hint">Catalogue indisponible hors connexion — réessayez avec du réseau.</small>';
+  }
+}
+
 /* brouillon déposé par la vue 3D (localStorage) → finalisé après le chargement des traces */
 async function processDraft3d() {
   let draft = null;
@@ -1543,7 +1587,7 @@ if (verEl) verEl.textContent = " Version " + APP_VERSION + ".";
 if (SAFE_VIEW && !SAFE_TRACKS) toast("Redémarrage après incident : vue réinitialisée", 5000);
 
 buildZoomRows();
-loadTracks().then(processDraft3d);
+loadTracks().then(processDraft3d).then(loadDemos);
 updateEstimate();
 refreshStorage();
 
