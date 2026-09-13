@@ -185,6 +185,14 @@
   .loc-dot { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px;
     background: #2b7de9; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
   .wpt-icon { color: #ffd43b; filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
+  /* étiquettes sommets / cols */
+  .poi-label { pointer-events: none; }
+  .poi-inner { transform: translate(-50%, -50%); white-space: nowrap; color: #fff;
+    font-size: 10.5px; font-weight: 600; letter-spacing: .2px;
+    text-shadow: 0 1px 2px #000, 0 0 4px rgba(0,0,0,.95); }
+  .poi-inner span { color: #ffd43b; font-size: 9px; }
+  .poi-label.col .poi-inner span { color: #7ecbff; font-size: 8.5px; letter-spacing: -1px; }
+  .poi-inner i { font-style: normal; font-weight: 400; opacity: .85; font-size: 9.5px; }
   .start-icon { background: #51cf66; border: 3px solid #fff; border-radius: 50%;
     box-shadow: 0 1px 6px rgba(0,0,0,.5); }
 
@@ -286,6 +294,8 @@
     <h3>Fond de carte</h3>
     <div id="layer-list"></div>
     <div class="switch-row"><span>Relief (estompage du terrain)</span><input type="checkbox" id="opt-shade"></div>
+    <div class="switch-row"><span>Noms des sommets et cols</span><input type="checkbox" id="opt-peaks"></div>
+    <small class="hint">Sommets et cols © contributeurs OpenStreetMap, visibles à partir du zoom 11, limités aux plus hauts pour rester lisible. Récupérés avec du réseau puis gardés en cache : téléchargez votre zone avec l'option active pour les avoir hors ligne.</small>
 
     <h3>Télécharger pour le hors-ligne</h3>
     <small class="hint">Cadrez la zone de votre rando, puis cochez les niveaux de zoom à emporter — chaque ligne affiche son coût pour la zone cadrée, et le zoom actuel est indiqué en bas à gauche de la carte. <b>3 niveaux suffisent</b>&nbsp;: entre deux niveaux téléchargés, la carte affiche automatiquement une version agrandie du niveau du dessous.</small>

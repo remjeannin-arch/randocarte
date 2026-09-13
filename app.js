@@ -2,7 +2,7 @@
 "use strict";
 
 /* ================= IndexedDB ================= */
-const DB_NAME = "randocarte", DB_VER = 1;
+const DB_NAME = "randocarte", DB_VER = 2;
 let dbPromise = null;
 function openDB() {
   if (dbPromise) return dbPromise;
@@ -12,6 +12,7 @@ function openDB() {
       const db = req.result;
       if (!db.objectStoreNames.contains("tiles")) db.createObjectStore("tiles");
       if (!db.objectStoreNames.contains("tracks")) db.createObjectStore("tracks", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("pois")) db.createObjectStore("pois");
     };
     req.onsuccess = () => res(req.result);
     req.onerror = () => rej(req.error);
@@ -115,7 +116,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v25";
+const APP_VERSION = "v26";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -131,6 +132,7 @@ window.addEventListener("unhandledrejection", (e) =>
 const state = {
   layerId: localStorage.getItem("rc.layer") || "ignplan",
   shade: localStorage.getItem("rc.shade") !== "0",
+  peaks: localStorage.getItem("rc.peaks") === "1",
   tracks: [],                 // {id,name,color,pts:[[lat,lon,ele],...],wpts,dist,dplus,dminus,cum:[],visible}
   activeTrackId: localStorage.getItem("rc.active") || null,
   polylines: new Map(),       // id -> L.LayerGroup
@@ -229,6 +231,69 @@ function setShade(on) {
 }
 if (state.shade) setShade(true);
 $("opt-shade").addEventListener("change", (e) => setShade(e.target.checked));
+
+/* ================= Sommets et cols (OpenStreetMap, cache hors ligne) ================= */
+let peakLayer = null, peakTimer = null, lastPeakBox = null;
+async function fetchPeaks(b) {
+  const key = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(v => v.toFixed(2)).join(",");
+  if (lastPeakBox === key) return;
+  const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+  const q = `[out:json][timeout:25];(node["natural"="peak"]["name"](${bbox});` +
+    `node["natural"="saddle"]["name"](${bbox});node["mountain_pass"="yes"]["name"](${bbox}););out body 250;`;
+  const r = await fetch("https://overpass-api.de/api/interpreter", {
+    method: "POST",
+    body: "data=" + encodeURIComponent(q),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+  if (!r.ok) throw new Error("overpass " + r.status);
+  const j = await r.json();
+  const nodes = (j.elements || []).filter(e => e.tags && e.tags.name).map(e => ({
+    id: e.id, lat: e.lat, lon: e.lon, name: e.tags.name,
+    ele: parseFloat(e.tags.ele) || null,
+    type: e.tags.natural === "peak" ? "peak" : "col",
+  }));
+  if (nodes.length) await idb("pois", "readwrite", s => { for (const n of nodes) s.put(n, n.id); });
+  lastPeakBox = key;
+}
+async function refreshPeaks() {
+  if (!state.peaks) return;
+  if (!peakLayer) peakLayer = L.layerGroup().addTo(map);
+  if (map.getZoom() < 11) { peakLayer.clearLayers(); return; }
+  const b = map.getBounds().pad(0.15);
+  if (navigator.onLine) { try { await fetchPeaks(b); } catch (e) { /* limite Overpass : cache seul */ } }
+  const all = (await idb("pois", "readonly", s => s.getAll()).catch(() => [])) || [];
+  const inBox = all.filter(p =>
+    p.lat > b.getSouth() && p.lat < b.getNorth() && p.lon > b.getWest() && p.lon < b.getEast());
+  inBox.sort((a, b2) => (b2.ele || 0) - (a.ele || 0));
+  const z = map.getZoom();
+  const max = z >= 14 ? 120 : z >= 12 ? 60 : 30;
+  peakLayer.clearLayers();
+  for (const p of inBox.slice(0, max)) {
+    const alt = p.ele ? ` <i>${Math.round(p.ele)}</i>` : "";
+    L.marker([p.lat, p.lon], {
+      interactive: false, keyboard: false,
+      icon: L.divIcon({ className: "poi-label" + (p.type === "col" ? " col" : ""), iconSize: [0, 0],
+        html: `<div class="poi-inner"><span>${p.type === "peak" ? "▲" : ")("}</span> ${escapeXml(p.name)}${alt}</div>` }),
+    }).addTo(peakLayer);
+  }
+}
+function setPeaks(on) {
+  state.peaks = on;
+  localStorage.setItem("rc.peaks", on ? "1" : "0");
+  const cb = $("opt-peaks");
+  if (cb) cb.checked = on;
+  if (!on) { if (peakLayer) peakLayer.clearLayers(); }
+  else {
+    refreshPeaks();
+    if (!navigator.onLine) toast("Hors ligne : seuls les sommets déjà en cache s'affichent");
+  }
+}
+map.on("moveend", () => {
+  if (!state.peaks) return;
+  clearTimeout(peakTimer);
+  peakTimer = setTimeout(refreshPeaks, 600);
+});
+$("opt-peaks").addEventListener("change", (e) => setPeaks(e.target.checked));
 
 /* ================= Géométrie ================= */
 const R = 6371000;
@@ -1339,7 +1404,11 @@ async function downloadArea() {
   $("dl-status").textContent = ctrl.signal.aborted
     ? `Annulé (${done - failed} tuiles conservées).`
     : `Terminé ✔ ${done - failed} tuiles disponibles hors ligne${failed ? `, ${failed} échecs` : ""}.`;
-  if (!ctrl.signal.aborted) toast("Zone téléchargée — utilisable sans réseau ✔");
+  if (!ctrl.signal.aborted) {
+    toast("Zone téléchargée — utilisable sans réseau ✔");
+    /* les noms de sommets de la zone partent aussi dans le cache */
+    if (state.peaks) { try { await fetchPeaks(map.getBounds().pad(0.15)); } catch (e) {} }
+  }
   refreshStorage();
 }
 $("btn-download").addEventListener("click", downloadArea);
@@ -1471,6 +1540,13 @@ function buildQuickLayers() {
     toast(state.shade ? "Relief activé" : "Relief coupé");
   });
   el.appendChild(sh);
+  const pk = document.createElement("button");
+  pk.innerHTML = (state.peaks ? "✓ " : "") + ico("pin", 15) + " Sommets et cols";
+  pk.addEventListener("click", () => {
+    setPeaks(!state.peaks);
+    buildQuickLayers();
+  });
+  el.appendChild(pk);
 }
 $("fab-layers").addEventListener("click", () => {
   buildQuickLayers();
@@ -1590,4 +1666,5 @@ buildZoomRows();
 loadTracks().then(processDraft3d).then(loadDemos);
 updateEstimate();
 refreshStorage();
+if (state.peaks) setPeaks(true);
 

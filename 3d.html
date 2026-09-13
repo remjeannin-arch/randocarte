@@ -87,7 +87,7 @@ if (!navigator.onLine) {
 /* ---- lecture de la trace dans la base de l'app ---- */
 function loadTrack() {
   return new Promise((resolve) => {
-    const req = indexedDB.open("randocarte", 1);
+    const req = indexedDB.open("randocarte");
     req.onerror = () => resolve(null);
     req.onsuccess = () => {
       try {
