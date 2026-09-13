@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Randox — Panorama</title>
+<meta name="theme-color" content="#171b14">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  :root { --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #171b14; color: #eaeee4;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none; }
+  #pano { position: absolute; inset: 0; touch-action: none; }
+  #bar { position: absolute; top: calc(var(--safe-top) + 8px); left: 8px; right: 8px; z-index: 10;
+    display: flex; gap: 6px; align-items: center; background: rgba(21,26,18,.9);
+    border-radius: 12px; padding: 7px 9px; backdrop-filter: blur(10px); }
+  #bar a, #bar button { border: none; border-radius: 9px; padding: 8px 11px; font-size: 14px;
+    background: #2b3324; color: #eaeee4; cursor: pointer; text-decoration: none; font-weight: 600;
+    display: flex; align-items: center; }
+  #bar button.on { background: #a3d65c; color: #17220b; }
+  #ptitle { flex: 1; font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #load { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); z-index: 20;
+    background: rgba(15,18,12,.95); padding: 16px 22px; border-radius: 12px; font-size: 14px;
+    text-align: center; line-height: 1.6; max-width: 84vw; }
+  #load a { color: #a3d65c; }
+</style>
+</head>
+<body>
+<canvas id="pano"></canvas>
+<div id="bar">
+  <a href="./" title="Retour">‹</a>
+  <span id="ptitle">Panorama</span>
+  <button id="btn-compass" title="Suivre la boussole">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="14.5 9.5 10.5 10.5 9.5 14.5 13.5 13.5" fill="currentColor" stroke="none"/></svg>
+  </button>
+  <button id="btn-gps" title="Recalculer depuis ma position GPS">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 21 3 13 21 11 13 3 11"/></svg>
+  </button>
+</div>
+<div id="load">Préparation du panorama…</div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const R = 6371000, D2R = Math.PI / 180;
+
+/* ---- point d'observation : hash "lat,lon", sinon dernière vue de la carte ---- */
+let lat0, lon0;
+{
+  const h = location.hash.slice(1).split(",");
+  lat0 = parseFloat(h[0]); lon0 = parseFloat(h[1]);
+  if (isNaN(lat0) || isNaN(lon0)) {
+    const v = JSON.parse(localStorage.getItem("rc.view") || "null");
+    if (v) { lat0 = v.c[0]; lon0 = v.c[1]; } else { lat0 = 42.076; lon0 = 9.222; }
+  }
+}
+
+const Z = 10, TS = 256, RADIUS = 45000, AZ_N = 540;
+const FOV = 100;                       /* degrés visibles à l'écran */
+const BANDS = [6000, 15000, 28000, RADIUS];
+const BAND_COLORS = ["#3d5233", "#55704a", "#7b9370", "#a9bfae"]; /* proche → lointain */
+
+/* ---- accès aux tuiles de terrain (cache IndexedDB partagé, clé dem10|z|x|y) ---- */
+function idbTiles(mode, fn) {
+  return new Promise((res) => {
+    try {
+      const rq = indexedDB.open("randocarte");
+      rq.onsuccess = () => {
+        try {
+          const r = fn(rq.result.transaction("tiles", mode).objectStore("tiles"));
+          r.onsuccess = () => res(r.result);
+          r.onerror = () => res(null);
+        } catch (e) { res(null); }
+      };
+      rq.onerror = () => res(null);
+    } catch (e) { res(null); }
+  });
+}
+const demTiles = new Map(); /* "x_y" -> ImageData */
+async function loadDemTile(x, y) {
+  const key = `dem10|${Z}|${x}|${y}`;
+  let blob = await idbTiles("readonly", s => s.get(key));
+  if (!blob) {
+    const r = await fetch(`https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${Z}/${x}/${y}.png`);
+    if (!r.ok) throw new Error("terrain " + r.status);
+    blob = await r.blob();
+    idbTiles("readwrite", s => s.put(blob, key));
+  }
+  const bmp = await createImageBitmap(blob);
+  const cv = document.createElement("canvas");
+  cv.width = TS; cv.height = TS;
+  const cx = cv.getContext("2d", { willReadFrequently: true });
+  cx.drawImage(bmp, 0, 0);
+  demTiles.set(x + "_" + y, cx.getImageData(0, 0, TS, TS).data);
+}
+function elevation(lat, lon) {
+  const n = TS * Math.pow(2, Z);
+  const px = (lon + 180) / 360 * n;
+  const rad = lat * D2R;
+  const py = (1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2 * n;
+  const tx = Math.floor(px / TS), ty = Math.floor(py / TS);
+  const d = demTiles.get(tx + "_" + ty);
+  if (!d) return null;
+  const ix = Math.min(TS - 1, Math.floor(px - tx * TS));
+  const iy = Math.min(TS - 1, Math.floor(py - ty * TS));
+  const o = (iy * TS + ix) * 4;
+  return d[o] * 256 + d[o + 1] + d[o + 2] / 256 - 32768;
+}
+
+/* ---- état du panorama ---- */
+let horizon = null;      /* AZ_N angles (rad) */
+let bandTop = null;      /* [4][AZ_N] angles par bande de distance */
+let labels = [];         /* {az, ang, name, km, col} */
+let h0 = 0;
+let heading = 0, compassOn = false, ready = false;
+
+const haversine = (a, b) => {
+  const dLat = (b[0] - a[0]) * D2R, dLon = (b[1] - a[1]) * D2R;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * D2R) * Math.cos(b[0] * D2R) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+};
+const bearingTo = (lat, lon) => {
+  const f1 = lat0 * D2R, f2 = lat * D2R, dl = (lon - lon0) * D2R;
+  return (Math.atan2(Math.sin(dl) * Math.cos(f2),
+    Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl)) / D2R + 360) % 360;
+};
+/* angle d'élévation vu de l'observateur (avec courbure terrestre + réfraction) */
+const viewAngle = (ele, d) => Math.atan2(ele - h0 - d * d / (2 * R) * 0.83, d);
+
+async function build() {
+  const load = $("load");
+  load.style.display = "block";
+  if (!navigator.onLine && !demTiles.size) {
+    /* on tentera le cache ; si vide, message plus bas */
+  }
+  /* tuiles nécessaires autour du point */
+  const dLat = RADIUS / 111320, dLon = RADIUS / (111320 * Math.cos(lat0 * D2R));
+  const n = TS * Math.pow(2, Z);
+  const tx = (lo) => Math.floor((lo + 180) / 360 * n / TS);
+  const ty = (la) => { const r2 = la * D2R; return Math.floor((1 - Math.log(Math.tan(r2) + 1 / Math.cos(r2)) / Math.PI) / 2 * n / TS); };
+  const x1 = tx(lon0 - dLon), x2 = tx(lon0 + dLon);
+  const y1 = ty(lat0 + dLat), y2 = ty(lat0 - dLat);
+  const jobs = [];
+  for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) jobs.push([x, y]);
+  let done = 0, fail = 0;
+  for (const [x, y] of jobs) {
+    try { await loadDemTile(x, y); } catch (e) { fail++; }
+    load.textContent = `Relief : ${++done}/${jobs.length} tuiles…`;
+  }
+  if (fail === jobs.length) {
+    load.innerHTML = "Terrain indisponible — le panorama nécessite une connexion la première fois.<br><br><a href='./'>‹ Retour à la carte</a>";
+    return;
+  }
+  h0 = (elevation(lat0, lon0) || 0) + 8;
+  $("ptitle").textContent = `Panorama · alt ${Math.round(h0 - 8)} m`;
+
+  /* silhouette d'horizon par lancer de rayons, avec bandes de profondeur */
+  load.textContent = "Calcul de l'horizon…";
+  await new Promise(r => setTimeout(r, 30));
+  horizon = new Float32Array(AZ_N).fill(-0.2);
+  bandTop = BANDS.map(() => new Float32Array(AZ_N).fill(-0.2));
+  const cosLat = Math.cos(lat0 * D2R);
+  for (let i = 0; i < AZ_N; i++) {
+    const az = i * 360 / AZ_N * D2R;
+    const sinA = Math.sin(az), cosA = Math.cos(az);
+    let d = 180;
+    while (d < RADIUS) {
+      const la = lat0 + (d * cosA) / 111320;
+      const lo = lon0 + (d * sinA) / (111320 * cosLat);
+      const e = elevation(la, lo);
+      if (e != null) {
+        const a = viewAngle(e, d);
+        if (a > horizon[i]) horizon[i] = a;
+        for (let b = 0; b < BANDS.length; b++)
+          if (d <= BANDS[b] && a > bandTop[b][i]) bandTop[b][i] = a;
+      }
+      d += Math.max(70, d * 0.013);
+    }
+  }
+
+  /* sommets nommés (OSM : cache commun + récupération en ligne) */
+  load.textContent = "Sommets…";
+  const pois = new Map();
+  await new Promise((res) => {
+    try {
+      const rq = indexedDB.open("randocarte");
+      rq.onsuccess = () => {
+        try {
+          const g = rq.result.transaction("pois", "readonly").objectStore("pois").getAll();
+          g.onsuccess = () => { (g.result || []).forEach(p => pois.set(p.id, p)); res(); };
+          g.onerror = () => res();
+        } catch (e) { res(); }
+      };
+      rq.onerror = () => res();
+    } catch (e) { res(); }
+  });
+  if (navigator.onLine) {
+    const bbox = `${lat0 - dLat},${lon0 - dLon},${lat0 + dLat},${lon0 + dLon}`;
+    const q = `[out:json][timeout:25];(node["natural"="peak"]["name"](${bbox});` +
+      `node["natural"="saddle"]["name"](${bbox});node["mountain_pass"="yes"]["name"](${bbox}););out body 400;`;
+    for (const host of ["https://overpass-api.de", "https://overpass.kumi.systems", "https://overpass.osm.ch"]) {
+      try {
+        const r = await fetch(host + "/api/interpreter", {
+          method: "POST", body: "data=" + encodeURIComponent(q),
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        });
+        if (!r.ok) continue;
+        (await r.json()).elements.filter(e => e.tags && e.tags.name).forEach(e => pois.set(e.id, {
+          id: e.id, lat: e.lat, lon: e.lon, name: e.tags.name,
+          ele: parseFloat(e.tags.ele) || null,
+          type: e.tags.natural === "peak" ? "peak" : "col",
+        }));
+        break;
+      } catch (e) {}
+    }
+  }
+  /* visibilité : l'angle du sommet doit rejoindre l'horizon dans sa direction */
+  const cand = [];
+  for (const p of pois.values()) {
+    const d = haversine([lat0, lon0], [p.lat, p.lon]);
+    if (d < 700 || d > RADIUS) continue;
+    const ele = p.ele || elevation(p.lat, p.lon);
+    if (ele == null) continue;
+    const az = bearingTo(p.lat, p.lon);
+    const ang = viewAngle(ele, d);
+    const bin = Math.round(az / 360 * AZ_N) % AZ_N;
+    const hMax = Math.max(horizon[bin], horizon[(bin + 1) % AZ_N], horizon[(bin + AZ_N - 1) % AZ_N]);
+    if (ang < hMax - 0.008) continue; /* caché derrière un relief plus proche */
+    cand.push({ az, ang, name: p.name, km: d / 1000, ele: ele, col: p.type === "col" });
+  }
+  cand.sort((a, b) => (b.ele || 0) - (a.ele || 0));
+  labels = [];
+  for (const c of cand) {
+    if (labels.some(l => Math.abs(((l.az - c.az + 540) % 360) - 180) < 2.6)) continue;
+    labels.push(c);
+    if (labels.length >= 80) break;
+  }
+  load.style.display = "none";
+  ready = true;
+  draw();
+}
+
+/* ---- rendu ---- */
+const cvs = $("pano");
+const CARDINAL = [[0, "N"], [45, "NE"], [90, "E"], [135, "SE"], [180, "S"], [225, "SO"], [270, "O"], [315, "NO"]];
+function draw() {
+  if (!ready) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = innerWidth, H = innerHeight;
+  cvs.width = W * dpr; cvs.height = H * dpr;
+  const ctx = cvs.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const ppd = W / FOV;                       /* pixels par degré d'azimut */
+  const yOf = (ang) => H * 0.72 - ang / D2R * (H / 55); /* ~ H/55 px par degré d'élévation */
+  /* ciel */
+  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.75);
+  sky.addColorStop(0, "#274b6d"); sky.addColorStop(1, "#c6d8e8");
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+  /* bandes de relief, du lointain au proche */
+  const azAt = (x) => (heading - FOV / 2 + x / ppd + 360) % 360;
+  for (let b = BANDS.length - 1; b >= 0; b--) {
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (let x = 0; x <= W; x += 2) {
+      const f = azAt(x) / 360 * AZ_N;
+      const i = Math.floor(f) % AZ_N, j = (i + 1) % AZ_N, t = f - Math.floor(f);
+      const a = bandTop[b][i] * (1 - t) + bandTop[b][j] * t;
+      ctx.lineTo(x, yOf(a));
+    }
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    ctx.fillStyle = BAND_COLORS[b];
+    ctx.fill();
+  }
+  /* étiquettes des sommets visibles dans le champ */
+  ctx.textAlign = "left";
+  const placed = [];
+  const inView = labels.filter(l => Math.abs(((l.az - heading + 540) % 360) - 180) < FOV / 2 + 3)
+    .sort((a, b) => a.az - b.az);
+  for (const l of inView) {
+    let x = (((l.az - heading + 540) % 360) - 180 + FOV / 2) * ppd;
+    const yTop = yOf(l.ang);
+    let lift = 0;
+    for (const p of placed) if (Math.abs(p.x - x) < 30) lift = Math.max(lift, p.lift + 34);
+    placed.push({ x, lift });
+    const yEnd = Math.max(40, H * 0.30 - lift * 0.4) + lift * 0; /* départ des textes étagés */
+    const yLine = Math.min(yTop - 4, H * 0.66);
+    ctx.strokeStyle = "rgba(255,255,255,.65)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, yTop - 2);
+    ctx.lineTo(x, H * 0.34 - lift);
+    ctx.stroke();
+    ctx.save();
+    ctx.translate(x + 3, H * 0.34 - lift - 4);
+    ctx.rotate(-52 * D2R);
+    ctx.font = "600 12.5px -apple-system, sans-serif";
+    ctx.fillStyle = "#fff";
+    ctx.shadowColor = "rgba(0,0,0,.8)"; ctx.shadowBlur = 3;
+    ctx.fillText(`${l.name}`, 0, 0);
+    ctx.shadowBlur = 0;
+    ctx.font = "400 10px -apple-system, sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,.85)";
+    ctx.fillText(`${l.ele ? Math.round(l.ele) + " m · " : ""}${l.km.toFixed(1)} km`, 0, 13);
+    ctx.restore();
+  }
+  /* boussole : ruban des caps */
+  ctx.textAlign = "center";
+  for (const [az, name] of CARDINAL) {
+    const dx = ((az - heading + 540) % 360) - 180;
+    if (Math.abs(dx) > FOV / 2) continue;
+    const x = (dx + FOV / 2) * ppd;
+    ctx.font = "700 13px -apple-system, sans-serif";
+    ctx.fillStyle = name === "N" ? "#ff7d7d" : "#fff";
+    ctx.shadowColor = "rgba(0,0,0,.8)"; ctx.shadowBlur = 3;
+    ctx.fillText(name, x, H - 26 - (window.visualViewport ? 0 : 0));
+    ctx.shadowBlur = 0;
+  }
+  ctx.font = "600 11px -apple-system, sans-serif";
+  ctx.fillStyle = "rgba(255,255,255,.8)";
+  ctx.fillText(Math.round((heading + 360) % 360) + "°", W / 2, 28 + 54);
+  /* trait central */
+  ctx.strokeStyle = "rgba(255,255,255,.45)";
+  ctx.beginPath(); ctx.moveTo(W / 2, H - 44); ctx.lineTo(W / 2, H - 58); ctx.stroke();
+}
+
+/* ---- interactions ---- */
+let dragX = null;
+cvs.addEventListener("pointerdown", (e) => { dragX = e.clientX; compassOff(); });
+window.addEventListener("pointermove", (e) => {
+  if (dragX == null) return;
+  heading = (heading - (e.clientX - dragX) / (innerWidth / FOV) + 360) % 360;
+  dragX = e.clientX;
+  draw();
+});
+window.addEventListener("pointerup", () => { dragX = null; });
+window.addEventListener("resize", draw);
+
+function compassOff() {
+  if (!compassOn) return;
+  compassOn = false;
+  $("btn-compass").classList.remove("on");
+}
+let compassAttached = false;
+function attachCompass() {
+  if (compassAttached) return;
+  compassAttached = true;
+  const h = (ev) => {
+    if (!compassOn) return;
+    let val = null;
+    if (ev.webkitCompassHeading != null) val = ev.webkitCompassHeading;
+    else if (ev.absolute && ev.alpha != null) val = (360 - ev.alpha) % 360;
+    if (val == null) return;
+    let diff = ((val - heading + 540) % 360) - 180;
+    heading = (heading + diff * 0.25 + 360) % 360;
+    draw();
+  };
+  if ("ondeviceorientationabsolute" in window) window.addEventListener("deviceorientationabsolute", h);
+  else window.addEventListener("deviceorientation", h);
+}
+$("btn-compass").addEventListener("click", () => {
+  compassOn = !compassOn;
+  $("btn-compass").classList.toggle("on", compassOn);
+  if (!compassOn) return;
+  if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function")
+    DeviceOrientationEvent.requestPermission().then(s => { if (s === "granted") attachCompass(); }).catch(() => {});
+  else attachCompass();
+});
+$("btn-gps").addEventListener("click", () => {
+  $("load").style.display = "block";
+  $("load").textContent = "Recherche GPS…";
+  navigator.geolocation.getCurrentPosition((g) => {
+    lat0 = g.coords.latitude; lon0 = g.coords.longitude;
+    history.replaceState(null, "", "#" + lat0.toFixed(6) + "," + lon0.toFixed(6));
+    ready = false;
+    demTiles.clear();
+    build();
+  }, () => { $("load").textContent = "Position indisponible"; setTimeout(() => { if (ready) $("load").style.display = "none"; }, 1500); },
+  { enableHighAccuracy: true, timeout: 15000 });
+});
+
+build();
+</script>
+</body>
+</html>

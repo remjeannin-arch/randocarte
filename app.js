@@ -116,7 +116,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v27";
+const APP_VERSION = "v28";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -167,6 +167,7 @@ const ICO = {
   car: '<path d="M4 16.5V12l2-5h12l2 5v4.5"/><path d="M4 12h16"/><circle cx="7.5" cy="16.5" r="1.6"/><circle cx="16.5" cy="16.5" r="1.6"/>',
   mtn: '<path d="M3 19h18"/><path d="M4 19l6-11 4 7 2.5-4L21 19"/>',
   copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/>',
+  pano: '<circle cx="17.5" cy="6.5" r="2.3"/><path d="M2 17l5.5-8 4 5.5 3-4L22 17"/><path d="M2 20.5h20"/>',
   save: '<path d="M5 3h11l3 3v15H5Z"/><path d="M8 3v5h7V3"/><circle cx="12" cy="14.5" r="2.5"/>',
 };
 const ico = (n, s = 18) =>
@@ -234,19 +235,27 @@ $("opt-shade").addEventListener("change", (e) => setShade(e.target.checked));
 
 /* ================= Sommets et cols (OpenStreetMap, cache hors ligne) ================= */
 let peakLayer = null, peakTimer = null, lastPeakBox = null;
+/* interroge Overpass avec bascule automatique entre miroirs (limites de débit) */
+async function overpassQuery(q) {
+  for (const host of ["https://overpass-api.de", "https://overpass.kumi.systems", "https://overpass.osm.ch"]) {
+    try {
+      const r = await fetch(host + "/api/interpreter", {
+        method: "POST",
+        body: "data=" + encodeURIComponent(q),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      });
+      if (r.ok) return await r.json();
+    } catch (e) {}
+  }
+  throw new Error("service OSM indisponible");
+}
 async function fetchPeaks(b) {
   const key = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(v => v.toFixed(2)).join(",");
   if (lastPeakBox === key) return;
   const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
   const q = `[out:json][timeout:25];(node["natural"="peak"]["name"](${bbox});` +
     `node["natural"="saddle"]["name"](${bbox});node["mountain_pass"="yes"]["name"](${bbox}););out body 250;`;
-  const r = await fetch("https://overpass-api.de/api/interpreter", {
-    method: "POST",
-    body: "data=" + encodeURIComponent(q),
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-  });
-  if (!r.ok) throw new Error("overpass " + r.status);
-  const j = await r.json();
+  const j = await overpassQuery(q);
   const nodes = (j.elements || []).filter(e => e.tags && e.tags.name).map(e => ({
     id: e.id, lat: e.lat, lon: e.lon, name: e.tags.name,
     ele: parseFloat(e.tags.ele) || null,
@@ -260,10 +269,15 @@ async function refreshPeaks() {
   if (!peakLayer) peakLayer = L.layerGroup().addTo(map);
   if (map.getZoom() < 11) { peakLayer.clearLayers(); return; }
   const b = map.getBounds().pad(0.15);
-  if (navigator.onLine) { try { await fetchPeaks(b); } catch (e) { /* limite Overpass : cache seul */ } }
+  let fetchFailed = false;
+  if (navigator.onLine) {
+    try { await fetchPeaks(b); } catch (e) { fetchFailed = true; }
+  }
   const all = (await idb("pois", "readonly", s => s.getAll()).catch(() => [])) || [];
   const inBox = all.filter(p =>
     p.lat > b.getSouth() && p.lat < b.getNorth() && p.lon > b.getWest() && p.lon < b.getEast());
+  if (fetchFailed && !inBox.length)
+    toast("Sommets momentanément indisponibles (service OSM surchargé) — réessayez dans une minute");
   inBox.sort((a, b2) => (b2.ele || 0) - (a.ele || 0));
   const z = map.getZoom();
   const max = z >= 14 ? 120 : z >= 12 ? 60 : 30;
@@ -1556,6 +1570,12 @@ $("fab-layers").addEventListener("click", () => {
 $("fab-3d").addEventListener("click", () => {
   location.href = "3d.html" + (state.activeTrackId ? "#" + state.activeTrackId : "");
 });
+/* panorama façon PeakFinder : depuis ma position GPS si connue, sinon le centre de la carte */
+$("fab-pano").addEventListener("click", () => {
+  const p = state.pos ? [state.pos.lat, state.pos.lon]
+    : [map.getCenter().lat, map.getCenter().lng];
+  location.href = `panorama.html#${p[0].toFixed(6)},${p[1].toFixed(6)}`;
+});
 const openPanel = () => {
   panel.classList.add("open");
   updateEstimate(); refreshStorage();
@@ -1648,6 +1668,7 @@ const setIco = (id, name, s, label) => {
 };
 setIco("fab-menu", "menu", 21);
 setIco("fab-layers", "layers", 21);
+setIco("fab-pano", "pano", 21);
 setIco("fab-draw", "pencil", 20);
 setIco("fab-locate", "nav", 20);
 setIco("fab-follow", "cross", 20);

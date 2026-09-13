@@ -1,11 +1,12 @@
 /* Service worker RandoCarte — met l'application elle-même en cache pour un démarrage 100 % hors ligne.
    Les tuiles de carte, elles, sont gérées dans IndexedDB par app.js. */
-const VERSION = "randocarte-v27";
+const VERSION = "randocarte-v28";
 const SHELL = [
   "./",
   "./index.html",
   "./app.js",
   "./3d.html",
+  "./panorama.html",
   "./vendor/maplibre-gl.js",
   "./vendor/maplibre-gl.css",
   "./manifest.webmanifest",
@@ -44,7 +45,7 @@ self.addEventListener("fetch", (e) => {
 
   // Navigation ET code applicatif : réseau d'abord, cache en secours (hors ligne).
   // app.js suit la page pour éviter tout décalage interface/code après une mise à jour.
-  if (e.request.mode === "navigate" || /\/(app\.js|index\.html|3d\.html)$/.test(url.pathname)) {
+  if (e.request.mode === "navigate" || /\/(app\.js|index\.html|3d\.html|panorama\.html)$/.test(url.pathname)) {
     e.respondWith(
       fetch(e.request)
         .then((r) => {
