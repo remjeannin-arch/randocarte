@@ -533,7 +533,7 @@ if (location.hash.startsWith("#@")) {
   });
 
   /* ================= Sommets nommés sur le relief (façon PeakVisor) ================= */
-  let peaksOn = localStorage.getItem("rc.peaks") === "1";
+  let peaksOn = localStorage.getItem("rc.peaks") !== "0";
   let peakMarkers = [], peakTimer = null, lastPeakBox = "", memPois = new Map();
   const loadPoisDB = () => new Promise((res) => {
     try {

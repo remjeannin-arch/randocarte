@@ -116,7 +116,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v32";
+const APP_VERSION = "v33";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -132,7 +132,7 @@ window.addEventListener("unhandledrejection", (e) =>
 const state = {
   layerId: localStorage.getItem("rc.layer") || "ignplan",
   shade: localStorage.getItem("rc.shade") !== "0",
-  peaks: localStorage.getItem("rc.peaks") === "1",
+  peaks: localStorage.getItem("rc.peaks") !== "0",
   tracks: [],                 // {id,name,color,pts:[[lat,lon,ele],...],wpts,dist,dplus,dminus,cum:[],visible}
   activeTrackId: localStorage.getItem("rc.active") || null,
   polylines: new Map(),       // id -> L.LayerGroup
@@ -296,9 +296,9 @@ async function ensurePeaksData(verbose) {
 function renderPeaks(verbose) {
   if (!state.peaks) return;
   if (!peakLayer) peakLayer = L.layerGroup().addTo(map);
-  if (map.getZoom() < 11) {
+  if (map.getZoom() < 9) {
     peakLayer.clearLayers();
-    if (verbose) toast("Sommets : zoomez davantage (visibles à partir du zoom 11)");
+    if (verbose) toast("Sommets : zoomez un peu (visibles à partir du zoom 9)");
     return;
   }
   const b = map.getBounds().pad(0.15);
@@ -306,7 +306,7 @@ function renderPeaks(verbose) {
     p.lat > b.getSouth() && p.lat < b.getNorth() && p.lon > b.getWest() && p.lon < b.getEast());
   inBox.sort((a, b2) => (b2.ele || 0) - (a.ele || 0));
   const z = map.getZoom();
-  const max = z >= 14 ? 120 : z >= 12 ? 60 : 30;
+  const max = z >= 14 ? 120 : z >= 12 ? 60 : z >= 11 ? 30 : 15;
   peakLayer.clearLayers();
   for (const p of inBox.slice(0, max)) {
     const alt = p.ele ? ` <i>${Math.round(p.ele)}</i>` : "";
@@ -1555,7 +1555,20 @@ $("backup-file").addEventListener("change", (e) => {
   e.target.value = "";
 });
 
+/* état lisible de la fonction sommets (diagnostic) */
+async function refreshPeaksDiag() {
+  const el = $("peaks-diag");
+  if (!el) return;
+  let n = 0;
+  await idb("pois", "readonly", s => { const r = s.count(); r.onsuccess = () => { n = r.result; }; }).catch(() => {});
+  const shown = peakLayer ? peakLayer.getLayers().length : 0;
+  el.textContent = `Base : ${n.toLocaleString("fr-FR")} sommets/cols installés · option ${state.peaks ? "active" : "coupée"} · ` +
+    `${shown} affichés au zoom ${map.getZoom()}${map.getZoom() < 9 ? " (zoomez à 9+)" : ""}` +
+    (n < 1000 ? " — base absente : ouvrez l'app avec du réseau" : "");
+}
+
 async function refreshStorage() {
+  refreshPeaksDiag();
   let count = 0;
   await idb("tiles", "readonly", s => { const r = s.count(); r.onsuccess = () => count = r.result; });
   let quota = "";
