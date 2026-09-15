@@ -116,7 +116,7 @@ const OfflineTileLayer = L.TileLayer.extend({
    Si le démarrage précédent ne s'est pas terminé (plantage), on repart d'une vue
    neutre ; deux échecs de suite → les traces ne sont plus dessinées. Le compteur
    est remis à zéro après 5 s de fonctionnement ou à la fermeture normale. */
-const APP_VERSION = "v31";
+const APP_VERSION = "v32";
 const bootFails = +(localStorage.getItem("rc.bootfail") || 0);
 localStorage.setItem("rc.bootfail", String(bootFails + 1));
 const SAFE_VIEW = bootFails >= 1, SAFE_TRACKS = bootFails >= 2;
@@ -335,6 +335,26 @@ map.on("moveend", () => {
   clearTimeout(peakTimer);
   peakTimer = setTimeout(() => { renderPeaks(); ensurePeaksData(); }, 250);
 });
+/* base embarquée : tous les sommets et cols de France, installée une fois puis hors ligne */
+async function seedPeaksFR() {
+  try {
+    if (localStorage.getItem("rc.poisdb") === "fr1" || !navigator.onLine) return;
+    const r = await fetch("peaks-fr.json");
+    if (!r.ok) return;
+    const arr = await r.json();
+    if (!Array.isArray(arr) || arr.length < 10000) return;
+    const obj = (a) => ({ id: a[0], lat: a[1], lon: a[2], name: a[3], ele: a[4] || null, type: a[5] ? "col" : "peak" });
+    for (let i = 0; i < arr.length; i += 800) {
+      const batch = arr.slice(i, i + 800);
+      await idb("pois", "readwrite", s => { for (const a of batch) s.put(obj(a), a[0]); });
+      await new Promise(res => setTimeout(res));
+    }
+    arr.forEach(a => { const p = obj(a); if (!memPois.has(p.id)) memPois.set(p.id, p); });
+    localStorage.setItem("rc.poisdb", "fr1");
+    if (state.peaks) renderPeaks();
+    toast(`Base des sommets de France installée ✔ (${arr.length.toLocaleString("fr-FR")} sommets et cols, disponibles hors ligne)`, 5000);
+  } catch (e) {}
+}
 $("opt-peaks").addEventListener("change", (e) => setPeaks(e.target.checked));
 
 /* ================= Géométrie ================= */
@@ -1716,4 +1736,5 @@ loadTracks().then(processDraft3d).then(loadDemos);
 updateEstimate();
 refreshStorage();
 if (state.peaks) setPeaks(true);
+seedPeaksFR();
 

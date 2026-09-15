@@ -1,6 +1,6 @@
 /* Service worker RandoCarte — met l'application elle-même en cache pour un démarrage 100 % hors ligne.
    Les tuiles de carte, elles, sont gérées dans IndexedDB par app.js. */
-const VERSION = "randocarte-v31";
+const VERSION = "randocarte-v32";
 const SHELL = [
   "./",
   "./index.html",
@@ -42,6 +42,8 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   // Ne jamais intercepter les serveurs de tuiles : app.js gère leur cache dans IndexedDB.
   if (url.origin !== location.origin) return;
+  // Tuiles terrain HD et base des sommets : gérées hors du cache applicatif.
+  if (url.pathname.includes("/demhd/") || url.pathname.endsWith("peaks-fr.json")) return;
 
   // Navigation ET code applicatif : réseau d'abord, cache en secours (hors ligne).
   // app.js suit la page pour éviter tout décalage interface/code après une mise à jour.
